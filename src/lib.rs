@@ -6,17 +6,8 @@ mod util;
 pub async fn start(state_dir: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     let discovery = discovery::Network::new(state_dir)?;
     discovery.join().await?;
+    let peers = discovery.get_peers().await?;
+    println!("Peers: {:?}", peers);
 
     Ok(())
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-
-//     #[test]
-//     fn it_works() {
-//         // let result = add(2, 2);
-//         // assert_eq!(result, 4);
-//     }
-// }

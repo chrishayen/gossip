@@ -11,7 +11,8 @@ async fn main() {
     for _ in 0..num_nodes {
         let tmp_dir = tempdir::TempDir::new("gossip-test").unwrap();
         let handle = tokio::spawn(async move {
-            start(Some(tmp_dir.path().to_path_buf())).await.unwrap();
+            let state_dir = tmp_dir.path().to_path_buf();
+            start(Some(state_dir)).await.unwrap();
         });
         handles.push(handle);
     }
