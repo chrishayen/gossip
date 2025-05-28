@@ -1,7 +1,4 @@
-use std::time::Duration;
-
 use gossip::start;
-use tokio::time::sleep;
 
 #[tokio::main]
 async fn main() {
@@ -20,6 +17,4 @@ async fn main() {
     for handle in handles {
         handle.await.unwrap();
     }
-
-    sleep(Duration::from_secs(10)).await;
 }
