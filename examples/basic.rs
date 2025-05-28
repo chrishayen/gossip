@@ -2,7 +2,7 @@ use gossip::start;
 
 #[tokio::main]
 async fn main() {
-    let num_nodes = 3;
+    let num_nodes = 10;
     let mut handles = Vec::new();
 
     for _ in 0..num_nodes {
