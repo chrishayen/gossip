@@ -39,3 +39,11 @@ impl Node {
         self.status = NodeStatus::Online;
     }
 }
+
+impl Eq for Node {}
+
+impl PartialEq for Node {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.addr == other.addr
+    }
+}
