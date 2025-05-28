@@ -1,11 +1,12 @@
 mod config;
+mod error;
 mod message;
 mod node;
 mod protocol;
 mod retry;
 mod tailscale;
 mod util;
-
+use log::error;
 use retry::retry;
 use std::{path::PathBuf, process::exit, time::Duration};
 
@@ -21,7 +22,7 @@ pub async fn start(state_dir: Option<PathBuf>) -> Result<(), Box<dyn std::error:
     .await;
 
     if rs.is_err() {
-        println!("Failed to join network: {:?}", rs.err());
+        error!("Failed to join network: {:?}", rs.err());
         exit(1)
     }
 

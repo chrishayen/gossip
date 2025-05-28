@@ -1,31 +1,26 @@
-use std::{os::fd::FromRawFd, path::PathBuf, sync::Arc};
-
+use crate::error::GossipError;
 use crate::util::make_id;
 use std::net::UdpSocket;
+use std::{os::fd::FromRawFd, path::PathBuf, sync::Arc};
 use tailscale_api::Tailscale;
-use tokio::{sync::Mutex, task::JoinError};
+use tokio::sync::Mutex;
 use tsnet::{ConfigBuilder, TSNet};
 
-#[derive(Debug)]
-pub enum NetworkError {
-    TSNetError(String),
-}
+// impl std::fmt::Display for NetworkError {
+//     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+//         match self {
+//             NetworkError::TSNetError(e) => write!(f, "TSNet error: {}", e),
+//         }
+//     }
+// }
 
-impl std::fmt::Display for NetworkError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            NetworkError::TSNetError(e) => write!(f, "TSNet error: {}", e),
-        }
-    }
-}
+// impl std::error::Error for NetworkError {}
 
-impl std::error::Error for NetworkError {}
-
-impl From<JoinError> for NetworkError {
-    fn from(err: JoinError) -> Self {
-        NetworkError::TSNetError(err.to_string())
-    }
-}
+// impl From<JoinError> for NetworkError {
+//     fn from(err: JoinError) -> Self {
+//         NetworkError::TSNetError(err.to_string())
+//     }
+// }
 
 pub struct Peer {
     ts: Arc<Mutex<TSNet>>,
@@ -52,33 +47,32 @@ impl Peer {
         Ok(Self { ts, api, id })
     }
 
-    pub async fn join_network(&self) -> Result<String, NetworkError> {
+    pub async fn join_network(&self) -> Result<String, GossipError> {
         let mut ts = self.ts.lock().await;
-        ts.up()
-            .map_err(|e| NetworkError::TSNetError(e.to_string()))?;
+        ts.up().map_err(|e| GossipError::NetworkError(e))?;
 
         Ok(self.id.clone())
     }
 
-    pub async fn get_peers(&self) -> Result<Vec<String>, NetworkError> {
+    pub async fn get_peers(&self) -> Result<Vec<String>, GossipError> {
         let api = self.api.lock().await;
         let devices = api
             .list_devices()
             .await
-            .map_err(|e| NetworkError::TSNetError(e.to_string()))?;
+            .map_err(|e| GossipError::PeerError(e))?;
         Ok(devices.into_iter().map(|d| d.hostname.clone()).collect())
     }
 
-    pub async fn listen(&self) -> Result<(), NetworkError> {
+    pub async fn listen(&self) -> Result<(), GossipError> {
         let ts = self.ts.lock().await;
         let listener = ts
             .listen("udp", ":42069")
-            .map_err(|e| NetworkError::TSNetError(e.to_string()))?;
+            .map_err(|e| GossipError::NetworkError(e))?;
 
         loop {
             let conn = ts
                 .accept(listener)
-                .map_err(|e| NetworkError::TSNetError(e.to_string()))?;
+                .map_err(|e| GossipError::NetworkError(e))?;
 
             println!("Accepted connection {:?}", conn);
             let remote_addr = ts.get_remote_addr(conn, listener);

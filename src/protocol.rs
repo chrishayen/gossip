@@ -1,19 +1,11 @@
 use crate::config::GossipConfig;
+use crate::error::GossipError;
 use crate::message::GossipMessage;
 use crate::node::{Node, NodeStatus};
 
 use log::{error, info};
 use rand::prelude::IndexedRandom;
 use std::net::UdpSocket;
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum GossipError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] postcard::Error),
-}
 
 pub trait GossipHandler {
     fn handle_message(&mut self, msg: GossipMessage, sender: std::net::SocketAddr);
