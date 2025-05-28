@@ -17,4 +17,8 @@ pub enum GossipError {
     /// Peer errors
     #[error("Peer error: {0}")]
     PeerError(#[from] tailscale_api::APIError),
+
+    /// IP address errors
+    #[error("IP address error: {0}")]
+    IpAddressError(String),
 }
