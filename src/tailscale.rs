@@ -1,10 +1,10 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{os::fd::FromRawFd, path::PathBuf, sync::Arc};
 
+use crate::util::make_id;
+use std::net::UdpSocket;
 use tailscale_api::Tailscale;
 use tokio::{sync::Mutex, task::JoinError};
 use tsnet::{ConfigBuilder, TSNet};
-
-use crate::util::make_id;
 
 #[derive(Debug)]
 pub enum NetworkError {
@@ -30,6 +30,7 @@ impl From<JoinError> for NetworkError {
 pub struct Peer {
     ts: Arc<Mutex<TSNet>>,
     api: Arc<Mutex<Tailscale>>,
+    id: String,
 }
 
 impl Peer {
@@ -48,12 +49,15 @@ impl Peer {
         let api = Arc::new(Mutex::new(api));
         let ts = Arc::new(Mutex::new(TSNet::new(config)?));
 
-        Ok(Self { ts, api })
+        Ok(Self { ts, api, id })
     }
 
-    pub async fn join_network(&self) -> Result<(), NetworkError> {
+    pub async fn join_network(&self) -> Result<String, NetworkError> {
         let mut ts = self.ts.lock().await;
-        ts.up().map_err(|e| NetworkError::TSNetError(e.to_string()))
+        ts.up()
+            .map_err(|e| NetworkError::TSNetError(e.to_string()))?;
+
+        Ok(self.id.clone())
     }
 
     pub async fn get_peers(&self) -> Result<Vec<String>, NetworkError> {
@@ -63,5 +67,42 @@ impl Peer {
             .await
             .map_err(|e| NetworkError::TSNetError(e.to_string()))?;
         Ok(devices.into_iter().map(|d| d.hostname.clone()).collect())
+    }
+
+    pub async fn listen(&self) -> Result<(), NetworkError> {
+        let ts = self.ts.lock().await;
+        let listener = ts
+            .listen("udp", ":42069")
+            .map_err(|e| NetworkError::TSNetError(e.to_string()))?;
+
+        loop {
+            let conn = ts
+                .accept(listener)
+                .map_err(|e| NetworkError::TSNetError(e.to_string()))?;
+
+            println!("Accepted connection {:?}", conn);
+            let remote_addr = ts.get_remote_addr(conn, listener);
+            println!("Remote address: {:?}", remote_addr);
+
+            let socket = unsafe { UdpSocket::from_raw_fd(conn) };
+            println!("Socket: {:?}", socket);
+
+            let mut buf = [0; 1024];
+
+            match socket.recv(&mut buf) {
+                // match socket.recv_from(&mut buf) {
+                Ok(len) => {
+                    // Convert received bytes to string and print
+                    let received = String::from_utf8_lossy(&buf[..len]);
+                    println!("Received: {}", received);
+                }
+                Err(e) => {
+                    eprintln!("Error receiving data: {}", e);
+                    // break;
+                }
+            }
+        }
+
+        Ok(())
     }
 }

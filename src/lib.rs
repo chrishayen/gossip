@@ -18,8 +18,8 @@ pub async fn start(state_dir: Option<PathBuf>) -> Result<(), Box<dyn std::error:
         exit(1)
     }
 
-    let peers = peer.get_peers().await?;
-    println!("Peers: {:?}", peers);
+    println!("Joined network {}", rs.unwrap());
+    peer.listen().await?;
 
     Ok(())
 }
