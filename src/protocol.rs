@@ -5,31 +5,52 @@ use crate::node::{Node, NodeStatus};
 
 use log::{error, info};
 use rand::prelude::IndexedRandom;
-use std::net::UdpSocket;
 
 pub trait GossipHandler {
-    fn handle_message(&mut self, msg: GossipMessage, sender: std::net::SocketAddr);
+    fn handle_message(
+        &mut self,
+        msg: GossipMessage,
+        sender: std::net::SocketAddr,
+    );
 }
 
-pub struct GossipProtocol<H: GossipHandler> {
-    socket: UdpSocket,
+pub trait GossipSocket {
+    fn recv_from(
+        &self,
+        listener: i32,
+        buf: &mut [u8],
+    ) -> Result<(usize, std::net::SocketAddr), GossipError>;
+    fn send_to(
+        &self,
+        buf: &[u8],
+        addr: std::net::SocketAddr,
+    ) -> Result<(), GossipError>;
+}
+
+pub struct GossipProtocol<H: GossipHandler, S: GossipSocket> {
+    listener: i32,
     config: GossipConfig,
     local_node: Node,
     peers: Vec<Node>,
     handler: H,
+    socket: S,
 }
 
-impl<H: GossipHandler> GossipProtocol<H> {
-    pub fn new(local_node: Node, socket: UdpSocket, config: GossipConfig, handler: H) -> Self {
-        socket
-            .set_nonblocking(true)
-            .expect("Failed to set nonblocking");
+impl<H: GossipHandler, S: GossipSocket> GossipProtocol<H, S> {
+    pub fn new(
+        local_node: Node,
+        listener: i32,
+        config: GossipConfig,
+        handler: H,
+        socket: S,
+    ) -> Self {
         GossipProtocol {
-            socket,
+            listener,
             config,
             local_node,
             peers: Vec::new(),
             handler,
+            socket,
         }
     }
 
@@ -66,10 +87,13 @@ impl<H: GossipHandler> GossipProtocol<H> {
     pub fn receive(&mut self) -> Result<(), GossipError> {
         let mut buf = vec![0; self.config.max_payload_size];
         loop {
-            match self.socket.recv_from(&mut buf) {
+            match self.socket.recv_from(self.listener, &mut buf) {
                 Ok((amt, src)) => {
                     if amt > self.config.max_payload_size {
-                        error!("Received packet exceeds MTU: {} bytes", amt);
+                        error!(
+                            "Received packet exceeds MTU: {} bytes",
+                            amt
+                        );
                         continue;
                     }
                     match GossipMessage::deserialize(&buf[..amt]) {
@@ -77,17 +101,25 @@ impl<H: GossipHandler> GossipProtocol<H> {
                             self.handle_message(&msg, src);
                             self.handler.handle_message(msg, src);
                         }
-                        Err(e) => error!("Deserialization error: {}", e),
+                        Err(e) => {
+                            error!("Deserialization error: {}", e)
+                        }
                     }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(e) => return Err(GossipError::Io(e)),
+                Err(e) => {
+                    return Err(GossipError::NetworkError(
+                        e.to_string(),
+                    ));
+                }
             }
         }
-        Ok(())
     }
 
-    fn send_to(&self, msg: &GossipMessage, addr: std::net::SocketAddr) -> Result<(), GossipError> {
+    fn send_to(
+        &self,
+        msg: &GossipMessage,
+        addr: std::net::SocketAddr,
+    ) -> Result<(), GossipError> {
         let buf = msg.serialize()?;
         if buf.len() > self.config.max_payload_size {
             return Err(GossipError::Serialization(
@@ -98,7 +130,10 @@ impl<H: GossipHandler> GossipProtocol<H> {
         Ok(())
     }
 
-    fn broadcast(&self, msg: &GossipMessage) -> Result<(), GossipError> {
+    fn broadcast(
+        &self,
+        msg: &GossipMessage,
+    ) -> Result<(), GossipError> {
         for peer in &self.peers {
             if !peer.is_offline(self.config.offline_timeout) {
                 self.send_to(msg, peer.addr)?;
@@ -107,16 +142,24 @@ impl<H: GossipHandler> GossipProtocol<H> {
         Ok(())
     }
 
-    fn handle_message(&mut self, msg: &GossipMessage, src: std::net::SocketAddr) {
+    fn handle_message(
+        &mut self,
+        msg: &GossipMessage,
+        src: std::net::SocketAddr,
+    ) {
         match msg {
             GossipMessage::Heartbeat { sender_id } => {
-                if let Some(node) = self.peers.iter_mut().find(|n| n.id == *sender_id) {
+                if let Some(node) =
+                    self.peers.iter_mut().find(|n| n.id == *sender_id)
+                {
                     node.update_heartbeat();
                     info!("Heartbeat from node {}", sender_id);
                 }
             }
             GossipMessage::Update { node } => {
-                if let Some(existing) = self.peers.iter_mut().find(|n| n.id == node.id) {
+                if let Some(existing) =
+                    self.peers.iter_mut().find(|n| n.id == node.id)
+                {
                     existing.addr = node.addr;
                     existing.status = node.status.clone();
                     existing.update_heartbeat();
