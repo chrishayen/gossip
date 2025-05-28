@@ -1,12 +1,11 @@
-use log::{error, info};
-use rand::seq::SliceRandom;
-use std::net::UdpSocket;
-use std::time::Duration;
-use thiserror::Error;
-
 use crate::config::GossipConfig;
 use crate::message::GossipMessage;
 use crate::node::{Node, NodeStatus};
+
+use log::{error, info};
+use rand::prelude::IndexedRandom;
+use std::net::UdpSocket;
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum GossipError {
@@ -55,7 +54,7 @@ impl<H: GossipHandler> GossipProtocol<H> {
     }
 
     pub fn gossip(&mut self) -> Result<(), GossipError> {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let targets = self
             .peers
             .choose_multiple(&mut rng, self.config.fanout)
@@ -100,7 +99,7 @@ impl<H: GossipHandler> GossipProtocol<H> {
         let buf = msg.serialize()?;
         if buf.len() > self.config.max_payload_size {
             return Err(GossipError::Serialization(
-                postcard::Error::SerializeBufferTooSmall,
+                postcard::Error::SerializeBufferFull,
             ));
         }
         self.socket.send_to(&buf, addr)?;
@@ -133,9 +132,6 @@ impl<H: GossipHandler> GossipProtocol<H> {
                     self.peers.push(node.clone());
                 }
                 info!("Updated node {} from {}", node.id, src);
-            }
-            GossipMessage::Application { .. } => {
-                // Handled by custom handler
             }
         }
     }
