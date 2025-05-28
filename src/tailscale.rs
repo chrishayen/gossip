@@ -98,7 +98,7 @@ impl Peer {
                 }
                 Err(e) => {
                     eprintln!("Error receiving data: {}", e);
-                    // break;
+                    break;
                 }
             }
         }
