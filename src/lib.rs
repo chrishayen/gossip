@@ -15,8 +15,8 @@ pub async fn start(state_dir: Option<PathBuf>) -> Result<(), Box<dyn std::error:
     let peer = tailscale::Peer::new(state_dir)?;
     let rs = retry(
         || peer.join_network(),
-        Some(1),
-        Some(Duration::from_secs(1)),
+        Some(3),
+        Some(Duration::from_secs(10)),
     )
     .await;
 
