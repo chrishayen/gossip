@@ -4,12 +4,13 @@ use crate::node::Node;
 use crate::protocol::GossipSocket;
 use crate::util::{extract_ipv4, hash_node_name, make_id};
 use log::info;
-use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::{SocketAddr, UdpSocket};
 use std::{os::fd::FromRawFd, path::PathBuf, sync::Arc};
 use tailscale_api::Tailscale as TailscaleApi;
 use tokio::sync::Mutex;
 use tsnet::{ConfigBuilder, TSNet};
 
+#[derive(Clone)]
 pub struct Tailscale {
     ts: Arc<Mutex<TSNet>>,
     api: Arc<Mutex<TailscaleApi>>,
@@ -47,7 +48,7 @@ impl GossipSocket for Tailscale {
         addr: std::net::SocketAddr,
     ) -> Result<(), GossipError> {
         // let ts = self.ts.blocking_lock();
-        info!("Sending to {}", addr);
+        info!("Sending to {} {:?}", addr, buf);
         Ok(())
     }
 }

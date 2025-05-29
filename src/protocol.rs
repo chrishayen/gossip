@@ -1,3 +1,7 @@
+use std::ops::Deref;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
 use crate::config::GossipConfig;
 use crate::error::GossipError;
 use crate::message::GossipMessage;
@@ -27,22 +31,22 @@ pub trait GossipSocket {
     ) -> Result<(), GossipError>;
 }
 
-pub struct GossipProtocol<H: GossipHandler, S: GossipSocket> {
+pub struct GossipProtocol<S: GossipSocket> {
     listener: i32,
-    config: GossipConfig,
+    config: Arc<GossipConfig>,
     local_node: Node,
     peers: Vec<Node>,
-    handler: H,
-    socket: S,
+    handler: Arc<Mutex<dyn GossipHandler + Send + Sync>>,
+    socket: Arc<S>,
 }
 
-impl<H: GossipHandler, S: GossipSocket> GossipProtocol<H, S> {
+impl<S: GossipSocket> GossipProtocol<S> {
     pub fn new(
         local_node: Node,
         listener: i32,
-        config: GossipConfig,
-        handler: H,
-        socket: S,
+        config: Arc<GossipConfig>,
+        handler: Arc<Mutex<dyn GossipHandler + Send + Sync>>,
+        socket: Arc<S>,
     ) -> Self {
         GossipProtocol {
             listener,
@@ -62,7 +66,8 @@ impl<H: GossipHandler, S: GossipSocket> GossipProtocol<H, S> {
         let msg = GossipMessage::Heartbeat {
             sender_id: self.local_node.id,
         };
-        self.broadcast(&msg)?;
+        info!("sending a heartbeart from {}", self.local_node.id);
+        // self.broadcast(&msg)?;
         Ok(())
     }
 
@@ -78,15 +83,19 @@ impl<H: GossipHandler, S: GossipSocket> GossipProtocol<H, S> {
                 let msg = GossipMessage::Update {
                     node: self.local_node.clone(),
                 };
-                self.send_to(&msg, peer.addr)?;
+                let buf = msg.serialize()?;
+                self.socket.send_to(&buf, peer.addr)?;
             }
         }
         Ok(())
     }
 
-    pub fn receive(&mut self) -> Result<(), GossipError> {
+    pub async fn receive(&mut self) -> Result<(), GossipError> {
         let mut buf = vec![0; self.config.max_payload_size];
+
         loop {
+            let handler = Arc::clone(&self.handler);
+
             match self.socket.recv_from(self.listener, &mut buf) {
                 Ok((amt, src)) => {
                     if amt > self.config.max_payload_size {
@@ -98,8 +107,8 @@ impl<H: GossipHandler, S: GossipSocket> GossipProtocol<H, S> {
                     }
                     match GossipMessage::deserialize(&buf[..amt]) {
                         Ok(msg) => {
-                            self.handle_message(&msg, src);
-                            self.handler.handle_message(msg, src);
+                            let mut handler = handler.lock().await;
+                            handler.handle_message(msg, src);
                         }
                         Err(e) => {
                             error!("Deserialization error: {}", e)
@@ -115,20 +124,20 @@ impl<H: GossipHandler, S: GossipSocket> GossipProtocol<H, S> {
         }
     }
 
-    fn send_to(
-        &self,
-        msg: &GossipMessage,
-        addr: std::net::SocketAddr,
-    ) -> Result<(), GossipError> {
-        let buf = msg.serialize()?;
-        if buf.len() > self.config.max_payload_size {
-            return Err(GossipError::Serialization(
-                postcard::Error::SerializeBufferFull,
-            ));
-        }
-        self.socket.send_to(&buf, addr)?;
-        Ok(())
-    }
+    // fn send_to(
+    //     &self,
+    //     msg: &GossipMessage,
+    //     addr: std::net::SocketAddr,
+    // ) -> Result<(), GossipError> {
+    //     let buf = msg.serialize()?;
+    //     if buf.len() > self.config.max_payload_size {
+    //         return Err(GossipError::Serialization(
+    //             postcard::Error::SerializeBufferFull,
+    //         ));
+    //     }
+    //     self.socket.send_to(&buf, addr)?;
+    //     Ok(())
+    // }
 
     fn broadcast(
         &self,
@@ -136,7 +145,11 @@ impl<H: GossipHandler, S: GossipSocket> GossipProtocol<H, S> {
     ) -> Result<(), GossipError> {
         for peer in &self.peers {
             if !peer.is_offline(self.config.offline_timeout) {
-                self.send_to(msg, peer.addr)?;
+                let buf = msg.serialize()?;
+                let socket = Arc::clone(&self.socket);
+                socket.send_to(&buf, peer.addr)?;
+            } else {
+                info!("Skipping offline node {}", peer.id);
             }
         }
         Ok(())
