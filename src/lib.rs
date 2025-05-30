@@ -10,11 +10,12 @@ mod util;
 use error::GossipError;
 use node::Node;
 use protocol::GossipTransport;
-
 use std::{
     net::{Ipv4Addr, SocketAddr},
+    sync::Arc,
     time::Duration,
 };
+use tokio::sync::{Mutex, RwLock};
 
 pub use config::GossipConfig;
 use log::info;
@@ -23,31 +24,27 @@ use tokio::{select, time::interval};
 pub async fn start(
     gossip_config: GossipConfig,
     transport: Box<dyn GossipTransport>,
+    seed_peers: Vec<Node>,
 ) -> Result<(), GossipError> {
-    // TODO: loop on outgoing gossip
-    // TODO: loop on incoming gossip
     let local_node = Node::new(
         0,
         SocketAddr::from((Ipv4Addr::LOCALHOST, gossip_config.gossip_port)),
     );
-    let mut heartbeat_interval = interval(gossip_config.heartbeat_interval);
 
-    let mut protocol =
-        protocol::GossipProtocol::new(gossip_config, local_node, transport);
+    let mut protocol = Arc::new(RwLock::new(protocol::GossipProtocol::new(
+        gossip_config,
+        local_node,
+        seed_peers,
+        transport,
+    )));
+
+    let _ = tokio::task::spawn({
+        let protocol = Arc::clone(&protocol);
+        async move { protocol.read().await.start_heartbeat().await }
+    });
 
     let _ = tokio::task::spawn(async move {
-        loop {
-            select! {
-                _ = heartbeat_interval.tick() => {
-                    info!("sending heartbeat");
-                    let res = protocol.send_heartbeat().await;
-
-                    if let Err(e) = res {
-                        info!("error sending heartbeat: {}", e);
-                    }
-                }
-            }
-        }
+        protocol.write().await.start_receive().await
     });
 
     tokio::time::sleep(Duration::from_secs(6)).await;

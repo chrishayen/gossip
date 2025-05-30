@@ -2,8 +2,6 @@ use std::time::Duration;
 
 #[derive(Clone)]
 pub struct GossipConfig {
-    /// Max payload size (e.g., 1024 for 1280 MTU)
-    pub max_payload_size: usize,
     /// Time between heartbeats
     pub heartbeat_interval: Duration,
     /// Time between gossip rounds
@@ -14,11 +12,13 @@ pub struct GossipConfig {
     pub fanout: usize,
     /// Port to listen on for gossip
     pub gossip_port: u16,
+
+    /// Prefix for node IDs
+    pub prefix: String,
 }
 
 impl Default for GossipConfig {
     /// Default gossip configuration
-    /// max_payload_size: 1024 (1280 MTU)
     /// heartbeat_interval: 1s
     /// gossip_interval: 2s
     /// offline_timeout: 10s
@@ -26,11 +26,11 @@ impl Default for GossipConfig {
     fn default() -> Self {
         GossipConfig {
             gossip_port: 42069,
-            max_payload_size: 1252,
             heartbeat_interval: Duration::from_secs(1),
             gossip_interval: Duration::from_secs(2),
             offline_timeout: Duration::from_secs(10),
             fanout: 4,
+            prefix: "ht".to_string(),
         }
     }
 }

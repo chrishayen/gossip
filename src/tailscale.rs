@@ -22,9 +22,9 @@ pub struct Tailscale {
 
 #[async_trait]
 impl GossipTransport for Tailscale {
-    async fn write_udp(
+    async fn write(
         &self,
-        buf: &[u8],
+        buf: &heapless::Vec<u8, 1024>,
         addr: String,
     ) -> Result<usize, GossipError> {
         let fd = self
@@ -34,6 +34,37 @@ impl GossipTransport for Tailscale {
         let socket = unsafe { UdpSocket::from_raw_fd(fd) };
         info!("sending to {} {:?}", addr, buf);
         socket.send(buf).map_err(GossipError::Io)
+    }
+
+    async fn recv_from(
+        &self,
+        buf: &mut Vec<u8>,
+    ) -> Result<(usize, SocketAddr), GossipError> {
+        let listener = self
+            .ts
+            .listen("udp", &format!(":{}", self.gossip_config.gossip_port))
+            .map_err(|e| GossipError::NetworkError(e))?;
+
+        let conn = self
+            .ts
+            .accept(listener)
+            .map_err(|e| GossipError::NetworkError(e))?;
+
+        let socket = unsafe { UdpSocket::from_raw_fd(conn) };
+        let remote_addr = self
+            .ts
+            .get_remote_addr(conn, listener)
+            .map_err(|e| GossipError::NetworkError(e))?;
+
+        let remote_addr = extract_ipv4(&remote_addr)?;
+        let remote_addr =
+            SocketAddr::from((remote_addr, self.gossip_config.gossip_port));
+
+        let len = socket
+            .recv(buf)
+            .map_err(|e| GossipError::NetworkError(e.to_string()))?;
+
+        Ok((len, remote_addr))
     }
 }
 // impl GossipSocket for Tailscale {
@@ -76,7 +107,7 @@ impl Tailscale {
         gossip_config: GossipConfig,
         state_dir: Option<PathBuf>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let id = make_id();
+        let id = make_id(&gossip_config.prefix);
         let default_config = ConfigBuilder::new().hostname(&id);
 
         let config = if let Some(state_dir) = state_dir {

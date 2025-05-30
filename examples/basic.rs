@@ -21,7 +21,11 @@ async fn main() {
             )
             .unwrap();
 
-            start(gossip_config, Box::new(ts)).await.unwrap();
+            let seed_peers = ts.get_peers().await.unwrap();
+
+            start(gossip_config, Box::new(ts), seed_peers)
+                .await
+                .unwrap();
         });
 
         handles.push(handle);

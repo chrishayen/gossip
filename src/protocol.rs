@@ -1,11 +1,17 @@
+use std::net::SocketAddr;
+use std::ops::DerefMut;
+
 use crate::config::GossipConfig;
 use crate::error::GossipError;
 use crate::message::GossipMessage;
 use crate::node::{Node, NodeStatus};
 use async_trait::async_trait;
 
-use log::info;
+use log::{error, info};
+use tokio::time::interval;
 // use rand::prelude::IndexedRandom;
+
+pub const MAX_PAYLOAD_SIZE: usize = 1024;
 
 pub struct GossipProtocol {
     config: GossipConfig,
@@ -18,18 +24,29 @@ impl GossipProtocol {
     pub fn new(
         config: GossipConfig,
         local_node: Node,
+        seed_peers: Vec<Node>,
         transport: Box<dyn GossipTransport>,
     ) -> Self {
         GossipProtocol {
             config,
             local_node,
-            peers: Vec::new(),
+            peers: seed_peers,
             transport,
         }
     }
 
     pub fn add_peer(&mut self, peer: Node) {
         self.peers.push(peer);
+    }
+
+    pub async fn start_heartbeat(&mut self) -> Result<(), GossipError> {
+        info!("starting heartbeat");
+        let mut interval = interval(self.config.heartbeat_interval);
+
+        loop {
+            self.send_heartbeat().await?;
+            interval.tick().await;
+        }
     }
 
     pub async fn send_heartbeat(&mut self) -> Result<(), GossipError> {
@@ -40,11 +57,44 @@ impl GossipProtocol {
 
         let len = self
             .transport
-            .write_udp(&msg.serialize()?, self.local_node.addr.to_string())
+            .write(&msg.serialize()?, self.local_node.addr.to_string())
             .await?;
 
         info!("sent {}", len);
         Ok(())
+    }
+
+    pub async fn start_receive(&mut self) -> Result<(), GossipError> {
+        info!("starting receive");
+        loop {
+            self.receive().await?;
+        }
+    }
+
+    pub async fn receive(&mut self) -> Result<(), GossipError> {
+        let mut buf = vec![0; MAX_PAYLOAD_SIZE];
+
+        loop {
+            match self.transport.recv_from(&mut buf).await {
+                Ok((amt, src)) => {
+                    if amt > MAX_PAYLOAD_SIZE {
+                        error!("Received packet exceeds MTU: {} bytes", amt);
+                        continue;
+                    }
+                    match GossipMessage::deserialize(&buf[..amt]) {
+                        Ok(msg) => {
+                            self.handle_message(msg, src);
+                        }
+                        Err(e) => {
+                            error!("Deserialization error: {}", e)
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(GossipError::NetworkError(e.to_string()));
+                }
+            }
+        }
     }
 
     // pub fn gossip(&mut self) -> Result<(), GossipError> {
@@ -65,35 +115,6 @@ impl GossipProtocol {
     //         }
     //     }
     //     Ok(())
-    // }
-
-    // pub async fn receive(&mut self) -> Result<(), GossipError> {
-    //     let mut buf = vec![0; self.config.max_payload_size];
-
-    //     loop {
-    //         let handler = Arc::clone(&self.handler);
-
-    //         match self.socket.recv_from(self.listener, &mut buf) {
-    //             Ok((amt, src)) => {
-    //                 if amt > self.config.max_payload_size {
-    //                     error!("Received packet exceeds MTU: {} bytes", amt);
-    //                     continue;
-    //                 }
-    //                 match GossipMessage::deserialize(&buf[..amt]) {
-    //                     Ok(msg) => {
-    //                         let mut handler = handler.lock().await;
-    //                         handler.handle_message(msg, src);
-    //                     }
-    //                     Err(e) => {
-    //                         error!("Deserialization error: {}", e)
-    //                     }
-    //                 }
-    //             }
-    //             Err(e) => {
-    //                 return Err(GossipError::NetworkError(e.to_string()));
-    //             }
-    //         }
-    //     }
     // }
 
     // fn send_to(
@@ -126,13 +147,13 @@ impl GossipProtocol {
 
     fn handle_message(
         &mut self,
-        msg: &GossipMessage,
+        msg: GossipMessage,
         src: std::net::SocketAddr,
     ) {
         match msg {
             GossipMessage::Heartbeat { sender_id } => {
                 if let Some(node) =
-                    self.peers.iter_mut().find(|n| n.id == *sender_id)
+                    self.peers.iter_mut().find(|n| n.id == sender_id)
                 {
                     node.update_heartbeat();
                     info!("Heartbeat from node {}", sender_id);
@@ -164,10 +185,15 @@ impl GossipProtocol {
 }
 
 #[async_trait]
-pub trait GossipTransport: Send {
-    async fn write_udp(
+pub trait GossipTransport: Send + Sync {
+    async fn write(
         &self,
-        buf: &[u8],
+        buf: &heapless::Vec<u8, 1024>,
         addr: String,
     ) -> Result<usize, GossipError>;
+
+    async fn recv_from(
+        &self,
+        buf: &mut Vec<u8>,
+    ) -> Result<(usize, SocketAddr), GossipError>;
 }
