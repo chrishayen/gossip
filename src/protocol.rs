@@ -1,60 +1,30 @@
-use std::ops::Deref;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
 use crate::config::GossipConfig;
 use crate::error::GossipError;
 use crate::message::GossipMessage;
 use crate::node::{Node, NodeStatus};
+use async_trait::async_trait;
 
-use log::{error, info};
-use rand::prelude::IndexedRandom;
+use log::info;
+// use rand::prelude::IndexedRandom;
 
-pub trait GossipHandler {
-    fn handle_message(
-        &mut self,
-        msg: GossipMessage,
-        sender: std::net::SocketAddr,
-    );
-}
-
-pub trait GossipSocket {
-    fn recv_from(
-        &self,
-        listener: i32,
-        buf: &mut [u8],
-    ) -> Result<(usize, std::net::SocketAddr), GossipError>;
-    fn send_to(
-        &self,
-        buf: &[u8],
-        addr: std::net::SocketAddr,
-    ) -> Result<(), GossipError>;
-}
-
-pub struct GossipProtocol<S: GossipSocket> {
-    listener: i32,
-    config: Arc<GossipConfig>,
+pub struct GossipProtocol {
+    config: GossipConfig,
     local_node: Node,
     peers: Vec<Node>,
-    handler: Arc<Mutex<dyn GossipHandler + Send + Sync>>,
-    socket: Arc<S>,
+    transport: Box<dyn GossipTransport>,
 }
 
-impl<S: GossipSocket> GossipProtocol<S> {
+impl GossipProtocol {
     pub fn new(
+        config: GossipConfig,
         local_node: Node,
-        listener: i32,
-        config: Arc<GossipConfig>,
-        handler: Arc<Mutex<dyn GossipHandler + Send + Sync>>,
-        socket: Arc<S>,
+        transport: Box<dyn GossipTransport>,
     ) -> Self {
         GossipProtocol {
-            listener,
             config,
             local_node,
             peers: Vec::new(),
-            handler,
-            socket,
+            transport,
         }
     }
 
@@ -62,67 +32,69 @@ impl<S: GossipSocket> GossipProtocol<S> {
         self.peers.push(peer);
     }
 
-    pub fn send_heartbeat(&self) -> Result<(), GossipError> {
+    pub async fn send_heartbeat(&mut self) -> Result<(), GossipError> {
         let msg = GossipMessage::Heartbeat {
             sender_id: self.local_node.id,
         };
-        info!("sending a heartbeart from {}", self.local_node.id);
-        // self.broadcast(&msg)?;
+        info!("sending a heartbeart from and to {}", self.local_node.id);
+
+        let len = self
+            .transport
+            .write_udp(&msg.serialize()?, self.local_node.addr.to_string())
+            .await?;
+
+        info!("sent {}", len);
         Ok(())
     }
 
-    pub fn gossip(&mut self) -> Result<(), GossipError> {
-        let mut rng = rand::rng();
-        let targets = self
-            .peers
-            .choose_multiple(&mut rng, self.config.fanout)
-            .collect::<Vec<_>>();
+    // pub fn gossip(&mut self) -> Result<(), GossipError> {
+    //     let mut rng = rand::rng();
+    //     let targets = self
+    //         .peers
+    //         .choose_multiple(&mut rng, self.config.fanout)
+    //         .collect::<Vec<_>>();
 
-        for peer in targets {
-            if !peer.is_offline(self.config.offline_timeout) {
-                let msg = GossipMessage::Update {
-                    node: self.local_node.clone(),
-                };
-                let buf = msg.serialize()?;
-                self.socket.send_to(&buf, peer.addr)?;
-            }
-        }
-        Ok(())
-    }
+    //     for peer in targets {
+    //         if !peer.is_offline(self.config.offline_timeout) {
+    //             let msg = GossipMessage::Update {
+    //                 node: self.local_node.clone(),
+    //             };
+    //             let buf = msg.serialize()?;
+    //             // self.socket.send_to(&buf, peer.addr)?;
+    //             self.sender(msg, peer.addr);
+    //         }
+    //     }
+    //     Ok(())
+    // }
 
-    pub async fn receive(&mut self) -> Result<(), GossipError> {
-        let mut buf = vec![0; self.config.max_payload_size];
+    // pub async fn receive(&mut self) -> Result<(), GossipError> {
+    //     let mut buf = vec![0; self.config.max_payload_size];
 
-        loop {
-            let handler = Arc::clone(&self.handler);
+    //     loop {
+    //         let handler = Arc::clone(&self.handler);
 
-            match self.socket.recv_from(self.listener, &mut buf) {
-                Ok((amt, src)) => {
-                    if amt > self.config.max_payload_size {
-                        error!(
-                            "Received packet exceeds MTU: {} bytes",
-                            amt
-                        );
-                        continue;
-                    }
-                    match GossipMessage::deserialize(&buf[..amt]) {
-                        Ok(msg) => {
-                            let mut handler = handler.lock().await;
-                            handler.handle_message(msg, src);
-                        }
-                        Err(e) => {
-                            error!("Deserialization error: {}", e)
-                        }
-                    }
-                }
-                Err(e) => {
-                    return Err(GossipError::NetworkError(
-                        e.to_string(),
-                    ));
-                }
-            }
-        }
-    }
+    //         match self.socket.recv_from(self.listener, &mut buf) {
+    //             Ok((amt, src)) => {
+    //                 if amt > self.config.max_payload_size {
+    //                     error!("Received packet exceeds MTU: {} bytes", amt);
+    //                     continue;
+    //                 }
+    //                 match GossipMessage::deserialize(&buf[..amt]) {
+    //                     Ok(msg) => {
+    //                         let mut handler = handler.lock().await;
+    //                         handler.handle_message(msg, src);
+    //                     }
+    //                     Err(e) => {
+    //                         error!("Deserialization error: {}", e)
+    //                     }
+    //                 }
+    //             }
+    //             Err(e) => {
+    //                 return Err(GossipError::NetworkError(e.to_string()));
+    //             }
+    //         }
+    //     }
+    // }
 
     // fn send_to(
     //     &self,
@@ -139,21 +111,18 @@ impl<S: GossipSocket> GossipProtocol<S> {
     //     Ok(())
     // }
 
-    fn broadcast(
-        &self,
-        msg: &GossipMessage,
-    ) -> Result<(), GossipError> {
-        for peer in &self.peers {
-            if !peer.is_offline(self.config.offline_timeout) {
-                let buf = msg.serialize()?;
-                let socket = Arc::clone(&self.socket);
-                socket.send_to(&buf, peer.addr)?;
-            } else {
-                info!("Skipping offline node {}", peer.id);
-            }
-        }
-        Ok(())
-    }
+    // fn broadcast(&self, msg: &GossipMessage) -> Result<(), GossipError> {
+    //     for peer in &self.peers {
+    //         if !peer.is_offline(self.config.offline_timeout) {
+    //             let buf = msg.serialize()?;
+    //             let socket = Arc::clone(&self.socket);
+    //             socket.send_to(&buf, peer.addr)?;
+    //         } else {
+    //             info!("Skipping offline node {}", peer.id);
+    //         }
+    //     }
+    //     Ok(())
+    // }
 
     fn handle_message(
         &mut self,
@@ -192,4 +161,13 @@ impl<S: GossipSocket> GossipProtocol<S> {
             }
         }
     }
+}
+
+#[async_trait]
+pub trait GossipTransport: Send {
+    async fn write_udp(
+        &self,
+        buf: &[u8],
+        addr: String,
+    ) -> Result<usize, GossipError>;
 }

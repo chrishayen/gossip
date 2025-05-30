@@ -1,40 +1,29 @@
-use std::sync::Arc;
-
 use env_logger::Env;
-use gossip::message::GossipMessage;
-use gossip::{GossipHandler, start};
-use tokio::sync::Mutex;
-
-struct Handler;
-
-impl GossipHandler for Handler {
-    fn handle_message(
-        &mut self,
-        msg: GossipMessage,
-        src: std::net::SocketAddr,
-    ) {
-        println!("Received message: {:?} from {}", msg, src);
-    }
-}
+use gossip::{GossipConfig, start, tailscale};
 
 #[tokio::main]
 async fn main() {
-    env_logger::init_from_env(
-        Env::default().default_filter_or("info"),
-    );
+    env_logger::init_from_env(Env::default().default_filter_or("info"));
 
-    let num_nodes = 3;
+    let num_nodes = 1;
     let mut handles = Vec::new();
 
-    let handler = Arc::new(Mutex::new(Handler));
-
     for _ in 0..num_nodes {
-        let handler = Arc::clone(&handler);
         let tmp_dir = tempdir::TempDir::new("gossip-test").unwrap();
+
         let handle = tokio::spawn(async move {
-            let state_dir = tmp_dir.path().to_path_buf();
-            start(handler.clone(), Some(state_dir)).await.unwrap();
+            let gossip_config = GossipConfig::default();
+
+            // connect to tailscale
+            let ts = tailscale::Tailscale::new(
+                gossip_config.clone(),
+                Some(tmp_dir.path().to_path_buf()),
+            )
+            .unwrap();
+
+            start(gossip_config, Box::new(ts)).await.unwrap();
         });
+
         handles.push(handle);
     }
 
