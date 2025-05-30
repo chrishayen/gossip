@@ -6,15 +6,16 @@ use nanoid::nanoid;
 use crate::error::GossipError;
 
 const ALPHABET: [char; 26] = [
-    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
-    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o',
+    'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
 ];
 
-pub fn make_id() -> String {
-    let friendly_id =
-        generate(Some(Options::builder().separator("-").build()));
+pub fn make_id(prefix: &str) -> String {
+    let friendly_id = generate(Some(
+        Options::builder().separator("-").add_adverb(false).build(),
+    ));
     let random_id = nanoid!(5, &ALPHABET);
-    format!("{}-{}", friendly_id, random_id)
+    format!("{}-{}-{}", prefix, friendly_id, random_id).to_lowercase()
 }
 
 pub fn extract_ipv4(input: &str) -> Result<Ipv4Addr, GossipError> {
@@ -24,9 +25,10 @@ pub fn extract_ipv4(input: &str) -> Result<Ipv4Addr, GossipError> {
     })?;
 
     // Trim whitespace and parse as IpAddr
-    let ip_addr = ip_str.trim().parse::<IpAddr>().map_err(|_| {
-        GossipError::IpAddressError(ip_str.to_string())
-    })?;
+    let ip_addr = ip_str
+        .trim()
+        .parse::<IpAddr>()
+        .map_err(|_| GossipError::IpAddressError(ip_str.to_string()))?;
 
     // Ensure it's an IPv4 address
     match ip_addr {
