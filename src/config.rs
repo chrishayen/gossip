@@ -12,6 +12,8 @@ pub struct GossipConfig {
     pub offline_timeout: Duration,
     /// Number of peers to gossip with per round
     pub fanout: usize,
+    /// Port to listen on for gossip
+    pub gossip_port: u16,
 }
 
 impl Default for GossipConfig {
@@ -23,6 +25,7 @@ impl Default for GossipConfig {
     /// fanout: 4
     fn default() -> Self {
         GossipConfig {
+            gossip_port: 42069,
             max_payload_size: 1252,
             heartbeat_interval: Duration::from_secs(1),
             gossip_interval: Duration::from_secs(2),
