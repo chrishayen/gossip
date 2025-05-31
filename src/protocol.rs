@@ -65,12 +65,9 @@ impl GossipProtocol {
             .collect::<Vec<_>>();
 
         for target in targets {
-            let len = self
-                .transport
+            self.transport
                 .write(&msg.serialize()?, target.addr.to_string())
                 .await?;
-
-            // info!("sent {} {}", target.addr, len);
         }
         Ok(())
     }
@@ -103,26 +100,26 @@ impl GossipProtocol {
         }
     }
 
-    pub async fn gossip(&mut self) -> Result<(), GossipError> {
-        let mut rng = self.rng.lock().await;
-        let peers = self.peers.read().await;
-        let targets = peers
-            .choose_multiple(&mut rng, self.config.fanout)
-            .collect::<Vec<_>>();
+    // pub async fn gossip(&mut self) -> Result<(), GossipError> {
+    //     let mut rng = self.rng.lock().await;
+    //     let peers = self.peers.read().await;
+    //     let targets = peers
+    //         .choose_multiple(&mut rng, self.config.fanout)
+    //         .collect::<Vec<_>>();
 
-        for peer in targets {
-            if !peer.is_offline(self.config.offline_timeout) {
-                let msg = GossipMessage::Update {
-                    node: self.local_node.clone(),
-                };
-                let buf = msg.serialize()?;
-                // self.socket.send_to(&buf, peer.addr)?;
-                // self.sender(msg, peer.addr);
-                self.transport.write(&buf, peer.addr.to_string()).await?;
-            }
-        }
-        Ok(())
-    }
+    //     for peer in targets {
+    //         if !peer.is_offline(self.config.offline_timeout) {
+    //             let msg = GossipMessage::Update {
+    //                 node: self.local_node.clone(),
+    //             };
+    //             let buf = msg.serialize()?;
+    //             // self.socket.send_to(&buf, peer.addr)?;
+    //             // self.sender(msg, peer.addr);
+    //             self.transport.write(&buf, peer.addr.to_string()).await?;
+    //         }
+    //     }
+    //     Ok(())
+    // }
 
     // fn send_to(
     //     &self,

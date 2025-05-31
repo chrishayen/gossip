@@ -8,7 +8,6 @@ pub mod tailscale;
 pub mod util;
 
 use error::GossipError;
-use log::info;
 use node::Node;
 use protocol::GossipTransport;
 use std::{
