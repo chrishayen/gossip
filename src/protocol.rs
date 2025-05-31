@@ -1,23 +1,27 @@
 use std::net::SocketAddr;
-use std::ops::DerefMut;
 
 use crate::config::GossipConfig;
 use crate::error::GossipError;
 use crate::message::GossipMessage;
-use crate::node::{Node, NodeStatus};
+use crate::node::Node;
 use async_trait::async_trait;
 
 use log::{error, info};
-use tokio::time::interval;
-// use rand::prelude::IndexedRandom;
+
+use rand::{SeedableRng, rngs::StdRng, seq::IndexedRandom};
+use tokio::{
+    sync::{Mutex, RwLock},
+    time::interval,
+};
 
 pub const MAX_PAYLOAD_SIZE: usize = 1024;
 
 pub struct GossipProtocol {
     config: GossipConfig,
     local_node: Node,
-    peers: Vec<Node>,
+    peers: RwLock<Vec<Node>>,
     transport: Box<dyn GossipTransport>,
+    rng: Mutex<StdRng>,
 }
 
 impl GossipProtocol {
@@ -30,49 +34,51 @@ impl GossipProtocol {
         GossipProtocol {
             config,
             local_node,
-            peers: seed_peers,
+            peers: RwLock::new(seed_peers),
             transport,
+            rng: Mutex::new(StdRng::from_os_rng()),
         }
     }
 
-    pub fn add_peer(&mut self, peer: Node) {
-        self.peers.push(peer);
-    }
+    // pub fn add_peer(&self, peer: Node) {}
 
-    pub async fn start_heartbeat(&mut self) -> Result<(), GossipError> {
-        info!("starting heartbeat");
+    pub async fn start_heartbeat(&self) {
         let mut interval = interval(self.config.heartbeat_interval);
 
         loop {
-            self.send_heartbeat().await?;
+            if let Err(e) = self.send_heartbeat().await {
+                error!("Error sending heartbeat: {}", e);
+            }
             interval.tick().await;
         }
     }
 
-    pub async fn send_heartbeat(&mut self) -> Result<(), GossipError> {
+    pub async fn send_heartbeat(&self) -> Result<(), GossipError> {
         let msg = GossipMessage::Heartbeat {
             sender_id: self.local_node.id,
         };
-        info!("sending a heartbeart from and to {}", self.local_node.id);
 
-        let len = self
-            .transport
-            .write(&msg.serialize()?, self.local_node.addr.to_string())
-            .await?;
+        let mut rng = self.rng.lock().await;
+        let peers = self.peers.read().await;
+        let targets = peers
+            .choose_multiple(&mut rng, self.config.fanout)
+            .collect::<Vec<_>>();
 
-        info!("sent {}", len);
+        for target in targets {
+            let len = self
+                .transport
+                .write(&msg.serialize()?, target.addr.to_string())
+                .await?;
+
+            // info!("sent {} {}", target.addr, len);
+        }
         Ok(())
     }
 
-    pub async fn start_receive(&mut self) -> Result<(), GossipError> {
-        info!("starting receive");
-        loop {
-            self.receive().await?;
-        }
-    }
-
-    pub async fn receive(&mut self) -> Result<(), GossipError> {
+    pub async fn start_receive(&self) {
         let mut buf = vec![0; MAX_PAYLOAD_SIZE];
+
+        info!("starting receive");
 
         loop {
             match self.transport.recv_from(&mut buf).await {
@@ -83,7 +89,7 @@ impl GossipProtocol {
                     }
                     match GossipMessage::deserialize(&buf[..amt]) {
                         Ok(msg) => {
-                            self.handle_message(msg, src);
+                            self.handle_message(msg, src).await;
                         }
                         Err(e) => {
                             error!("Deserialization error: {}", e)
@@ -91,31 +97,32 @@ impl GossipProtocol {
                     }
                 }
                 Err(e) => {
-                    return Err(GossipError::NetworkError(e.to_string()));
+                    error!("Error receiving packet: {}", e);
                 }
             }
         }
     }
 
-    // pub fn gossip(&mut self) -> Result<(), GossipError> {
-    //     let mut rng = rand::rng();
-    //     let targets = self
-    //         .peers
-    //         .choose_multiple(&mut rng, self.config.fanout)
-    //         .collect::<Vec<_>>();
+    pub async fn gossip(&mut self) -> Result<(), GossipError> {
+        let mut rng = self.rng.lock().await;
+        let peers = self.peers.read().await;
+        let targets = peers
+            .choose_multiple(&mut rng, self.config.fanout)
+            .collect::<Vec<_>>();
 
-    //     for peer in targets {
-    //         if !peer.is_offline(self.config.offline_timeout) {
-    //             let msg = GossipMessage::Update {
-    //                 node: self.local_node.clone(),
-    //             };
-    //             let buf = msg.serialize()?;
-    //             // self.socket.send_to(&buf, peer.addr)?;
-    //             self.sender(msg, peer.addr);
-    //         }
-    //     }
-    //     Ok(())
-    // }
+        for peer in targets {
+            if !peer.is_offline(self.config.offline_timeout) {
+                let msg = GossipMessage::Update {
+                    node: self.local_node.clone(),
+                };
+                let buf = msg.serialize()?;
+                // self.socket.send_to(&buf, peer.addr)?;
+                // self.sender(msg, peer.addr);
+                self.transport.write(&buf, peer.addr.to_string()).await?;
+            }
+        }
+        Ok(())
+    }
 
     // fn send_to(
     //     &self,
@@ -145,15 +152,16 @@ impl GossipProtocol {
     //     Ok(())
     // }
 
-    fn handle_message(
-        &mut self,
+    async fn handle_message(
+        &self,
         msg: GossipMessage,
         src: std::net::SocketAddr,
     ) {
+        let mut peers = self.peers.write().await;
+
         match msg {
             GossipMessage::Heartbeat { sender_id } => {
-                if let Some(node) =
-                    self.peers.iter_mut().find(|n| n.id == sender_id)
+                if let Some(node) = peers.iter_mut().find(|n| n.id == sender_id)
                 {
                     node.update_heartbeat();
                     info!("Heartbeat from node {}", sender_id);
@@ -161,27 +169,29 @@ impl GossipProtocol {
             }
             GossipMessage::Update { node } => {
                 if let Some(existing) =
-                    self.peers.iter_mut().find(|n| n.id == node.id)
+                    peers.iter_mut().find(|n| n.id == node.id)
                 {
                     existing.addr = node.addr;
                     existing.status = node.status.clone();
                     existing.update_heartbeat();
                 } else {
-                    self.peers.push(node.clone());
+                    peers.push(node.clone());
                 }
                 info!("Updated node {} from {}", node.id, src);
             }
         }
     }
 
-    pub fn check_offline_nodes(&mut self) {
-        for node in &mut self.peers {
-            if node.is_offline(self.config.offline_timeout) {
-                node.status = NodeStatus::Offline;
-                info!("Marked node {} as offline", node.id);
-            }
-        }
-    }
+    // pub fn check_offline_nodes(&mut self) {
+    //     let peers = self.peers.write().unwrap();
+
+    //     for node in peers {
+    //         if node.is_offline(self.config.offline_timeout) {
+    //             node.status = NodeStatus::Offline;
+    //             info!("Marked node {} as offline", node.id);
+    //         }
+    //     }
+    // }
 }
 
 #[async_trait]
@@ -196,4 +206,6 @@ pub trait GossipTransport: Send + Sync {
         &self,
         buf: &mut Vec<u8>,
     ) -> Result<(usize, SocketAddr), GossipError>;
+
+    async fn get_ip(&self) -> Result<String, GossipError>;
 }

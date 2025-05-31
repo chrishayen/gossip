@@ -6,18 +6,111 @@ use crate::protocol::GossipTransport;
 
 use crate::util::{extract_ipv4, hash_node_name, make_id};
 use async_trait::async_trait;
+use futures::future::ok;
 use log::info;
 use std::net::{SocketAddr, UdpSocket};
-use std::{os::fd::FromRawFd, path::PathBuf, sync::Arc};
+use std::{os::fd::FromRawFd, path::PathBuf};
 use tailscale_api::Tailscale as TailscaleApi;
-use tokio::sync::Mutex;
 use tsnet::{ConfigBuilder, TSNet};
 
 pub struct Tailscale {
-    ts: TSNet,
-    api: Arc<Mutex<TailscaleApi>>,
     id: String,
     gossip_config: GossipConfig,
+    ts: TSNet,
+    api: TailscaleApi,
+    listener: i32,
+}
+
+impl Tailscale {
+    pub fn new(
+        gossip_config: GossipConfig,
+        state_dir: Option<PathBuf>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let node_id = make_id(&gossip_config.prefix);
+        let api = TailscaleApi::new_from_env();
+
+        let ts_config = if let Some(state_dir) = state_dir {
+            ConfigBuilder::new()
+                .hostname(&node_id)
+                .dir(state_dir.to_str().unwrap())
+        } else {
+            ConfigBuilder::new().hostname(&node_id)
+        };
+        let ts_config = ts_config.build()?;
+        let ts = TSNet::new(ts_config)?;
+
+        Ok(Self {
+            id: node_id,
+            gossip_config,
+            ts,
+            api,
+            listener: -1,
+        })
+    }
+
+    pub async fn listen(&mut self) -> Result<i32, GossipError> {
+        if self.listener == -1 {
+            let ip_addr = self.get_ip().await?;
+            let ip_addr = extract_ipv4(&ip_addr)?;
+            let ip_addr = ip_addr.to_string();
+            let listen_addr =
+                format!("{}:{}", ip_addr, self.gossip_config.gossip_port);
+
+            self.listener = self
+                .ts
+                .listen("udp", &listen_addr)
+                .map_err(|e| GossipError::NetworkError(e))?;
+
+            info!("listening on {} {}", self.listener, listen_addr);
+        }
+
+        Ok(self.listener)
+    }
+
+    pub async fn join_network(&mut self) -> Result<String, GossipError> {
+        self.ts.up().map_err(|e| GossipError::NetworkError(e))?;
+        Ok(self.id.clone())
+    }
+
+    pub async fn get_ip(&self) -> Result<String, GossipError> {
+        let ip = self
+            .ts
+            .get_ips(None)
+            .map_err(|e| GossipError::NetworkError(e))?;
+
+        Ok(ip)
+    }
+
+    pub async fn get_peers(&self) -> Result<Vec<Node>, GossipError> {
+        let devices = self
+            .api
+            .list_devices()
+            .await
+            .map_err(|e| GossipError::PeerError(e))?;
+
+        let prefix = format!("{}-", self.gossip_config.prefix);
+
+        let nodes: Vec<Node> = devices
+            .into_iter()
+            .filter(|d| d.hostname.starts_with(&prefix))
+            .filter_map(|d| {
+                let name = d.hostname;
+                let node_id = hash_node_name(&name);
+                let ip_str = d.addresses.first()?;
+                let ip = extract_ipv4(ip_str).ok()?;
+                let addr = SocketAddr::from((ip, 42069));
+                Some(Node::new(node_id, addr))
+            })
+            .collect();
+
+        Ok(nodes)
+    }
+
+    // pub async fn listen(&self) -> Result<i32, GossipError> {
+    //     self.ts
+    //         .listen("udp", &format!(":{}", self.gossip_config.gossip_port))
+    //         .map_err(|e| GossipError::NetworkError(e))
+    // }
 }
 
 #[async_trait]
@@ -32,7 +125,6 @@ impl GossipTransport for Tailscale {
             .dial("udp", addr.as_str())
             .map_err(GossipError::NetworkError)?;
         let socket = unsafe { UdpSocket::from_raw_fd(fd) };
-        info!("sending to {} {:?}", addr, buf);
         socket.send(buf).map_err(GossipError::Io)
     }
 
@@ -40,20 +132,17 @@ impl GossipTransport for Tailscale {
         &self,
         buf: &mut Vec<u8>,
     ) -> Result<(usize, SocketAddr), GossipError> {
-        let listener = self
-            .ts
-            .listen("udp", &format!(":{}", self.gossip_config.gossip_port))
-            .map_err(|e| GossipError::NetworkError(e))?;
-
         let conn = self
             .ts
-            .accept(listener)
+            .accept(self.listener)
             .map_err(|e| GossipError::NetworkError(e))?;
+
+        info!("accepted connection from {}", conn);
 
         let socket = unsafe { UdpSocket::from_raw_fd(conn) };
         let remote_addr = self
             .ts
-            .get_remote_addr(conn, listener)
+            .get_remote_addr(conn, self.listener)
             .map_err(|e| GossipError::NetworkError(e))?;
 
         let remote_addr = extract_ipv4(&remote_addr)?;
@@ -65,6 +154,10 @@ impl GossipTransport for Tailscale {
             .map_err(|e| GossipError::NetworkError(e.to_string()))?;
 
         Ok((len, remote_addr))
+    }
+
+    async fn get_ip(&self) -> Result<String, GossipError> {
+        self.get_ip().await
     }
 }
 // impl GossipSocket for Tailscale {
@@ -101,73 +194,3 @@ impl GossipTransport for Tailscale {
 //         Ok(())
 //     }
 // }
-
-impl Tailscale {
-    pub fn new(
-        gossip_config: GossipConfig,
-        state_dir: Option<PathBuf>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let id = make_id(&gossip_config.prefix);
-        let default_config = ConfigBuilder::new().hostname(&id);
-
-        let config = if let Some(state_dir) = state_dir {
-            default_config.dir(state_dir.to_str().unwrap())
-        } else {
-            default_config
-        };
-
-        let config = config.build()?;
-        let api = TailscaleApi::new_from_env();
-        let api = Arc::new(Mutex::new(api));
-        let ts = TSNet::new(config)?;
-
-        Ok(Self {
-            ts,
-            api,
-            id,
-            gossip_config,
-        })
-    }
-
-    pub async fn join_network(&mut self) -> Result<String, GossipError> {
-        self.ts.up().map_err(|e| GossipError::NetworkError(e))?;
-        Ok(self.id.clone())
-    }
-
-    pub async fn get_peers(&self) -> Result<Vec<Node>, GossipError> {
-        let api = self.api.lock().await;
-        let devices = api
-            .list_devices()
-            .await
-            .map_err(|e| GossipError::PeerError(e))?;
-
-        let nodes: Vec<Node> = devices
-            .into_iter()
-            .filter_map(|d| {
-                let name = d.hostname;
-                let node_id = hash_node_name(&name);
-                let ip_str = d.addresses.first()?;
-                let ip = extract_ipv4(ip_str).ok()?;
-                let addr = SocketAddr::from((ip, 42069));
-                Some(Node::new(node_id, addr))
-            })
-            .collect();
-
-        Ok(nodes)
-    }
-
-    pub async fn get_ip(&self) -> Result<String, GossipError> {
-        let ip = self
-            .ts
-            .get_ips(None)
-            .map_err(|e| GossipError::NetworkError(e))?;
-
-        Ok(ip)
-    }
-
-    pub async fn listen(&self) -> Result<i32, GossipError> {
-        self.ts
-            .listen("udp", &format!(":{}", self.gossip_config.gossip_port))
-            .map_err(|e| GossipError::NetworkError(e))
-    }
-}

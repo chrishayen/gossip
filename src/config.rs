@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct GossipConfig {
     /// Time between heartbeats
     pub heartbeat_interval: Duration,
@@ -12,9 +12,10 @@ pub struct GossipConfig {
     pub fanout: usize,
     /// Port to listen on for gossip
     pub gossip_port: u16,
-
     /// Prefix for node IDs
     pub prefix: String,
+    /// IP address to listen on for gossip
+    pub ip_address: String,
 }
 
 impl Default for GossipConfig {
@@ -26,11 +27,12 @@ impl Default for GossipConfig {
     fn default() -> Self {
         GossipConfig {
             gossip_port: 42069,
-            heartbeat_interval: Duration::from_secs(1),
+            heartbeat_interval: Duration::from_millis(2),
             gossip_interval: Duration::from_secs(2),
             offline_timeout: Duration::from_secs(10),
             fanout: 4,
             prefix: "ht".to_string(),
+            ip_address: "127.0.0.1".to_string(),
         }
     }
 }
