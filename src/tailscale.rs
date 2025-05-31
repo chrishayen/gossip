@@ -6,9 +6,10 @@ use crate::protocol::GossipTransport;
 
 use crate::util::{extract_ipv4, hash_node_name, make_id};
 use async_trait::async_trait;
-use futures::future::ok;
+
 use log::info;
 use std::net::{SocketAddr, UdpSocket};
+
 use std::{os::fd::FromRawFd, path::PathBuf};
 use tailscale_api::Tailscale as TailscaleApi;
 use tsnet::{ConfigBuilder, TSNet};
