@@ -27,7 +27,7 @@ impl Default for GossipConfig {
     fn default() -> Self {
         GossipConfig {
             gossip_port: 42069,
-            heartbeat_interval: Duration::from_millis(100),
+            heartbeat_interval: Duration::from_secs(1),
             gossip_interval: Duration::from_secs(2),
             offline_timeout: Duration::from_secs(10),
             fanout: 4,
