@@ -73,9 +73,8 @@ impl GossipProtocol {
     }
 
     pub async fn start_receive(&self) {
-        let mut buf = vec![0; MAX_PAYLOAD_SIZE];
-
         info!("starting receive");
+        let mut buf = vec![0; MAX_PAYLOAD_SIZE];
 
         loop {
             match self.transport.recv_from(&mut buf).await {
