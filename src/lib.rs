@@ -14,6 +14,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
 };
+use tokio::task::JoinHandle;
 
 pub use config::GossipConfig;
 
@@ -38,14 +39,19 @@ pub async fn start(
     ));
 
     let protocol_clone = Arc::clone(&protocol);
-    let heartbeat =
-        tokio::task::spawn(
-            async move { protocol_clone.start_heartbeat().await },
-        );
-    let receive =
-        tokio::task::spawn(async move { protocol.start_receive().await });
 
-    let _ = tokio::join!(receive, heartbeat);
+    let mut handles = Vec::<JoinHandle<()>>::new();
+
+    // let heartbeat =
+    handles.push(tokio::task::spawn(async move {
+        protocol_clone.start_heartbeat().await
+    }));
+
+    handles.push(tokio::task::spawn(
+        async move { protocol.start_receive().await },
+    ));
+
+    let _ = futures::future::join_all(handles).await;
 
     Ok(())
 }
