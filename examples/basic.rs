@@ -6,7 +6,7 @@ use log::info;
 async fn main() {
     env_logger::init_from_env(Env::default().default_filter_or("info"));
 
-    let num_nodes = 3;
+    let num_nodes = 1;
     let mut handles = Vec::new();
 
     for _ in 0..num_nodes {
