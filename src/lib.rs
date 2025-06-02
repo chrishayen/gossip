@@ -13,8 +13,8 @@ use protocol::GossipTransport;
 use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
+    thread,
 };
-use tokio::task::JoinHandle;
 
 pub use config::GossipConfig;
 
@@ -40,18 +40,40 @@ pub async fn start(
 
     let protocol_clone = Arc::clone(&protocol);
 
-    let mut handles = Vec::<JoinHandle<()>>::new();
+    let mut handles = Vec::new();
 
-    // let heartbeat =
-    handles.push(tokio::task::spawn(async move {
-        protocol_clone.start_heartbeat().await
+    handles.push(thread::spawn(move || {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(protocol_clone.start_heartbeat());
     }));
 
-    handles.push(tokio::task::spawn(
-        async move { protocol.start_receive().await },
-    ));
+    handles.push(thread::spawn(move || {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(protocol.start_receive());
+    }));
 
-    let _ = futures::future::join_all(handles).await;
+    for handle in handles {
+        match handle.join() {
+            Ok(_) => println!("thread done"),
+            Err(e) => println!("Thread panicked: {:?}", e),
+        }
+    }
+
+    // let handle = thread::spawn(move || {
+    //     protocol_clone.start_receive().await
+    // });
+    // let mut handles = Vec::<JoinHandle<()>>::new();
+
+    // // let heartbeat =
+    // handles.push(tokio::task::spawn(async move {
+    //     protocol_clone.start_heartbeat().await
+    // }));
+
+    // handles.push(tokio::task::spawn(
+    //     async move { protocol.start_receive().await },
+    // ));
+
+    // let _ = futures::future::select_all(handles).await;
 
     Ok(())
 }
