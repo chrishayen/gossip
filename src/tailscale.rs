@@ -10,16 +10,17 @@ use async_trait::async_trait;
 use log::info;
 use std::net::{SocketAddr, UdpSocket};
 
+use std::os::fd::AsFd;
 use std::{os::fd::FromRawFd, path::PathBuf};
 use tailscale_api::Tailscale as TailscaleApi;
-use tsnet::{ConfigBuilder, TSNet};
+use tsnet::{ConfigBuilder, TSNet, TailscaleListener};
 
 pub struct Tailscale {
     id: String,
     gossip_config: GossipConfig,
     ts: TSNet,
     api: TailscaleApi,
-    listener: i32,
+    listener: Option<TailscaleListener>,
 }
 
 impl Tailscale {
@@ -45,27 +46,26 @@ impl Tailscale {
             gossip_config,
             ts,
             api,
-            listener: -1,
+            listener: None,
         })
     }
 
-    pub async fn listen(&mut self) -> Result<i32, GossipError> {
-        if self.listener == -1 {
+    pub async fn listen(&mut self) -> Result<(), GossipError> {
+        if self.listener.is_none() {
             let ip_addr = self.get_ip().await?;
             let ip_addr = extract_ipv4(&ip_addr)?;
             let ip_addr = ip_addr.to_string();
             let listen_addr =
                 format!("{}:{}", ip_addr, self.gossip_config.gossip_port);
 
-            self.listener = self
-                .ts
-                .listen("udp", &listen_addr)
-                .map_err(|e| GossipError::NetworkError(e))?;
-
-            info!("listening on {} {}", self.listener, listen_addr);
+            self.listener = Some(
+                self.ts
+                    .listen("udp", &listen_addr)
+                    .map_err(|e| GossipError::NetworkError(e))?,
+            );
         }
 
-        Ok(self.listener)
+        Ok(())
     }
 
     pub async fn join_network(&mut self) -> Result<String, GossipError> {
@@ -125,7 +125,7 @@ impl GossipTransport for Tailscale {
             .ts
             .dial("udp", addr.as_str())
             .map_err(GossipError::NetworkError)?;
-        let socket = unsafe { UdpSocket::from_raw_fd(fd) };
+        let socket = UdpSocket::from(fd);
         socket.send(buf).map_err(GossipError::Io)
     }
 
@@ -133,18 +133,27 @@ impl GossipTransport for Tailscale {
         &self,
         buf: &mut Vec<u8>,
     ) -> Result<(usize, SocketAddr), GossipError> {
+        if self.listener.is_none() {
+            return Err(GossipError::NetworkError(
+                "you must call listen first".to_string(),
+            ));
+        }
+
+        let listener = self.listener.as_ref().unwrap();
+
         let conn = self
             .ts
-            .accept(self.listener)
+            .accept(listener.as_fd())
             .map_err(|e| GossipError::NetworkError(e))?;
 
-        info!("accepted connection from {}", conn);
+        info!("accepted connection");
 
-        let socket = unsafe { UdpSocket::from_raw_fd(conn) };
         let remote_addr = self
             .ts
-            .get_remote_addr(conn, self.listener)
+            .get_remote_addr(conn.as_fd(), listener.as_fd())
             .map_err(|e| GossipError::NetworkError(e))?;
+
+        let socket = UdpSocket::from(conn);
 
         let remote_addr = extract_ipv4(&remote_addr)?;
         let remote_addr =
