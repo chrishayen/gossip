@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use crate::config::GossipConfig;
 use crate::error::GossipError;
@@ -11,7 +11,7 @@ use log::{error, info};
 use rand::{SeedableRng, rngs::StdRng, seq::IndexedRandom};
 use tokio::{
     sync::{Mutex, RwLock},
-    time::interval,
+    time::{interval, sleep},
 };
 
 pub const MAX_PAYLOAD_SIZE: usize = 1024;
@@ -65,9 +65,11 @@ impl GossipProtocol {
             .collect::<Vec<_>>();
 
         for target in targets {
+            info!("sending heartbeat to {}", target.addr);
             self.transport
                 .write(&msg.serialize()?, target.addr.to_string())
                 .await?;
+            sleep(Duration::from_millis(1)).await;
         }
         Ok(())
     }
