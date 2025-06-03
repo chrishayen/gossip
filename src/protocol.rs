@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, time::Duration};
 
+use crate::constants::MAX_PAYLOAD_SIZE;
 use crate::error::GossipError;
 // use crate::message::GossipMessage;
 use crate::node::Node;
@@ -14,8 +15,6 @@ use tokio::{
     sync::{Mutex, RwLock},
     time::{interval, sleep},
 };
-
-pub const MAX_PAYLOAD_SIZE: usize = 1024;
 
 pub struct GossipProtocol {
     config: GossipConfig,
@@ -45,7 +44,10 @@ impl GossipProtocol {
         let mut interval = interval(self.config.heartbeat_interval);
 
         loop {
-            let msg = GossipMessage::heartbeat(self.local_node.id);
+            let msg = GossipMessage::heartbeat(
+                self.local_node.id,
+                Some(self.config.message_ttl),
+            );
 
             if let Err(e) = self.gossip(msg).await {
                 error!("Error sending heartbeat: {}", e);
@@ -55,6 +57,9 @@ impl GossipProtocol {
         }
     }
 
+    /// Start the receive loop.
+    /// This will receive messages from the network and handle them,
+    /// forwarding non-system messages to the user's handler.
     pub async fn start_receive(&self) {
         info!("starting receive");
         let mut buf = vec![0; MAX_PAYLOAD_SIZE];
@@ -149,7 +154,7 @@ impl GossipProtocol {
     //     addr: std::net::SocketAddr,
     // ) -> Result<(), GossipError> {
     //     let buf = msg.serialize()?;
-    //     if buf.len() > self.config.max_payload_size {
+    //     if buf.len() > self.config.MAX_PAYLOAD_SIZE {
     //         return Err(GossipError::Serialization(
     //             postcard::Error::SerializeBufferFull,
     //         ));
@@ -187,7 +192,7 @@ impl GossipProtocol {
 pub trait GossipTransport: Send + Sync {
     async fn write(
         &self,
-        buf: &heapless::Vec<u8, 1024>,
+        buf: &heapless::Vec<u8, MAX_PAYLOAD_SIZE>,
         addr: String,
     ) -> Result<usize, GossipError>;
 

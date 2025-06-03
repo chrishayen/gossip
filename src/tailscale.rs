@@ -1,6 +1,6 @@
-use crate::error::GossipError;
-
 use crate::GossipConfig;
+use crate::constants::MAX_PAYLOAD_SIZE;
+use crate::error::GossipError;
 use crate::node::Node;
 use crate::protocol::GossipTransport;
 
@@ -118,7 +118,7 @@ impl Tailscale {
 impl GossipTransport for Tailscale {
     async fn write(
         &self,
-        buf: &heapless::Vec<u8, 1024>,
+        buf: &heapless::Vec<u8, MAX_PAYLOAD_SIZE>,
         addr: String,
     ) -> Result<usize, GossipError> {
         let fd = self
