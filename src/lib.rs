@@ -28,33 +28,32 @@ pub async fn start(
 ) -> Result<(), GossipError> {
     // get the ip from the transport
     // and define the local node
-    let ip_addr = gossip_config.ip_address.parse::<Ipv4Addr>().unwrap();
-
-    let local_node = Node::new(
+    let ip = gossip_config.ip_address.parse::<Ipv4Addr>().unwrap();
+    let local = Node::new(
         hash_node_name(&gossip_config.node_name),
-        SocketAddr::from((ip_addr, gossip_config.gossip_port)),
+        SocketAddr::from((ip, gossip_config.gossip_port)),
     );
 
     // initialize the gossip protocol
-    let protocol = Arc::new(protocol::GossipProtocol::new(
+    let p = Arc::new(protocol::GossipProtocol::new(
         gossip_config,
-        local_node,
+        local,
         seed_peers,
         transport,
     ));
 
-    let protocol_clone = Arc::clone(&protocol);
-    let mut handles = Vec::new();
+    let p1 = Arc::clone(&p);
 
-    handles.push(thread::spawn(move || {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(protocol_clone.start_heartbeat());
-    }));
-
-    handles.push(thread::spawn(move || {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(protocol.start_receive());
-    }));
+    let handles = [
+        thread::spawn(move || {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(p1.start_heartbeat());
+        }),
+        thread::spawn(move || {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(p.start_receive());
+        }),
+    ];
 
     for handle in handles {
         match handle.join() {
@@ -62,22 +61,6 @@ pub async fn start(
             Err(e) => println!("Thread panicked: {:?}", e),
         }
     }
-
-    // let handle = thread::spawn(move || {
-    //     protocol_clone.start_receive().await
-    // });
-    // let mut handles = Vec::<JoinHandle<()>>::new();
-
-    // // let heartbeat =
-    // handles.push(tokio::task::spawn(async move {
-    //     protocol_clone.start_heartbeat().await
-    // }));
-
-    // handles.push(tokio::task::spawn(
-    //     async move { protocol.start_receive().await },
-    // ));
-
-    // let _ = futures::future::select_all(handles).await;
 
     Ok(())
 }
