@@ -85,10 +85,8 @@ impl GossipProtocol {
                         }
                         Err(e) => {
                             debug!(
-                                "Deserialization error: {} {} {}",
-                                e,
-                                amt,
-                                String::from_utf8_lossy(&buf[..amt])
+                                "Deserialization error: size:{} e:{}",
+                                amt, e,
                             )
                         }
                     }
