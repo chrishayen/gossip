@@ -27,10 +27,10 @@ async fn main() {
             let seed_peers = ts.get_peers().await.unwrap();
             let ip = ts.get_ip().await.unwrap();
             let ip = util::extract_ipv4(ip.as_str()).unwrap();
-
             info!("ip: {}", ip);
 
             gossip_config.ip_address = ip.to_string();
+            gossip_config.node_name = ts.id.clone();
 
             start(gossip_config, Box::new(ts), seed_peers)
                 .await
