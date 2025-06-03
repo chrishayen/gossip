@@ -18,6 +18,8 @@ use std::{
 
 pub use config::GossipConfig;
 
+use crate::util::hash_node_name;
+
 pub async fn start(
     gossip_config: GossipConfig,
     transport: Box<dyn GossipTransport>,
@@ -27,8 +29,10 @@ pub async fn start(
     // and define the local node
     let ip_addr = gossip_config.ip_address.parse::<Ipv4Addr>().unwrap();
 
-    let local_node =
-        Node::new(0, SocketAddr::from((ip_addr, gossip_config.gossip_port)));
+    let local_node = Node::new(
+        hash_node_name(&gossip_config.node_name),
+        SocketAddr::from((ip_addr, gossip_config.gossip_port)),
+    );
 
     // initialize the gossip protocol
     let protocol = Arc::new(protocol::GossipProtocol::new(
@@ -39,7 +43,6 @@ pub async fn start(
     ));
 
     let protocol_clone = Arc::clone(&protocol);
-
     let mut handles = Vec::new();
 
     handles.push(thread::spawn(move || {
