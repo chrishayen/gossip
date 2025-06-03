@@ -11,12 +11,12 @@ use log::info;
 use std::net::{SocketAddr, UdpSocket};
 
 use std::os::fd::AsFd;
-use std::{os::fd::FromRawFd, path::PathBuf};
+use std::path::PathBuf;
 use tailscale_api::Tailscale as TailscaleApi;
 use tsnet::{ConfigBuilder, TSNet, TailscaleListener};
 
 pub struct Tailscale {
-    id: String,
+    pub id: String,
     gossip_config: GossipConfig,
     ts: TSNet,
     api: TailscaleApi,
