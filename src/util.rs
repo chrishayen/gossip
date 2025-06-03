@@ -44,34 +44,3 @@ pub fn hash_node_name(name: &str) -> u32 {
         .iter()
         .fold(0u32, |acc, &b| acc.wrapping_add(b as u32))
 }
-
-// loop {
-//     let conn = ts
-//         .accept(listener)
-//         .map_err(|e| GossipError::NetworkError(e))?;
-
-//     println!("Accepted connection {:?}", conn);
-//     let remote_addr = ts.get_remote_addr(conn, listener);
-//     println!("Remote address: {:?}", remote_addr);
-
-//     let socket = unsafe { UdpSocket::from_raw_fd(conn) };
-//     println!("Socket: {:?}", socket);
-
-//     let mut buf = [0; 1024];
-
-//     match socket.recv(&mut buf) {
-//         // match socket.recv_from(&mut buf) {
-//         Ok(len) => {
-//             // Convert received bytes to string and print
-//             let received =
-//                 String::from_utf8_lossy(&buf[..len]);
-//             println!("Received: {}", received);
-//         }
-//         Err(e) => {
-//             eprintln!("Error receiving data: {}", e);
-//             break;
-//         }
-//     }
-// }
-
-// Ok(())
