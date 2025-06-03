@@ -1,14 +1,15 @@
 use std::{net::SocketAddr, time::Duration};
 
-use crate::config::GossipConfig;
 use crate::error::GossipError;
-use crate::message::GossipMessage;
+// use crate::message::GossipMessage;
 use crate::node::Node;
+use crate::{config::GossipConfig, message::GossipMessage};
 use async_trait::async_trait;
 
 use log::{error, info};
 
 use rand::{SeedableRng, rngs::StdRng, seq::index::sample};
+
 use tokio::{
     sync::{Mutex, RwLock},
     time::{interval, sleep},
@@ -44,9 +45,7 @@ impl GossipProtocol {
         let mut interval = interval(self.config.heartbeat_interval);
 
         loop {
-            let msg = GossipMessage::Heartbeat {
-                sender_id: self.local_node.id,
-            };
+            let msg = GossipMessage::heartbeat(self.local_node.id);
 
             if let Err(e) = self.gossip(msg).await {
                 error!("Error sending heartbeat: {}", e);
@@ -64,10 +63,12 @@ impl GossipProtocol {
             match self.transport.recv_from(&mut buf).await {
                 Ok((amt, src)) => {
                     info!("received packet from {}", src);
+
                     if amt > MAX_PAYLOAD_SIZE {
                         error!("Received packet exceeds MTU: {} bytes", amt);
                         continue;
                     }
+
                     match GossipMessage::deserialize(&buf[..amt]) {
                         Ok(msg) => {
                             self.handle_message(msg, src).await;
@@ -84,10 +85,48 @@ impl GossipProtocol {
         }
     }
 
+    async fn handle_message(
+        &self,
+        msg: GossipMessage,
+        src: std::net::SocketAddr,
+    ) {
+        info!("Received message from {}", src);
+
+        // update the nodes list if needed
+        self.update_nodes(msg.from_id, src).await;
+
+        match msg.msg_type.as_str() {
+            "heartbeat" => {
+                self.update_heartbeat(msg.from_id).await;
+            }
+            _ => {
+                error!("Unknown message type: {}", msg.msg_type);
+            }
+        }
+    }
+
+    async fn update_nodes(&self, node_id: u32, src: std::net::SocketAddr) {
+        let mut peers = self.peers.write().await;
+
+        // if the node is not in the peers list, add it
+        if !peers.iter().any(|n| n.id == node_id) {
+            info!("new node {}", node_id);
+            peers.push(Node::new(node_id, src));
+        }
+    }
+
+    async fn update_heartbeat(&self, node_id: u32) {
+        let mut peers = self.peers.write().await;
+        if let Some(node) = peers.iter_mut().find(|n| n.id == node_id) {
+            node.update_heartbeat();
+        }
+    }
+
     async fn fanout_peer_addresses(&self) -> Vec<Node> {
         let mut rng = self.rng.lock().await;
         let peers = self.peers.read().await;
-        sample(&mut rng, peers.len(), self.config.fanout)
+        let fanout = peers.len().min(self.config.fanout);
+        sample(&mut rng, peers.len(), fanout)
             .iter()
             .map(|i| peers[i].clone())
             .collect::<Vec<_>>()
@@ -131,39 +170,6 @@ impl GossipProtocol {
     //     }
     //     Ok(())
     // }
-
-    async fn handle_message(
-        &self,
-        msg: GossipMessage,
-        src: std::net::SocketAddr,
-    ) {
-        let mut peers = self.peers.write().await;
-
-        match msg {
-            GossipMessage::Heartbeat { sender_id } => {
-                if let Some(node) = peers.iter_mut().find(|n| n.id == sender_id)
-                {
-                    node.update_heartbeat();
-                    info!("Heartbeat from node {}", sender_id);
-                } else {
-                    info!("New node {}", sender_id);
-                    peers.push(Node::new(sender_id, src));
-                }
-            }
-            GossipMessage::Update { node } => {
-                if let Some(existing) =
-                    peers.iter_mut().find(|n| n.id == node.id)
-                {
-                    existing.addr = node.addr;
-                    existing.status = node.status.clone();
-                    existing.update_heartbeat();
-                } else {
-                    peers.push(node.clone());
-                }
-                info!("Updated node {} from {}", node.id, src);
-            }
-        }
-    }
 
     // pub fn check_offline_nodes(&mut self) {
     //     let peers = self.peers.write().unwrap();
