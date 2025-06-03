@@ -8,7 +8,7 @@ use async_trait::async_trait;
 
 use log::{error, info};
 
-use rand::{SeedableRng, rngs::StdRng, seq::IndexedRandom};
+use rand::{SeedableRng, rngs::StdRng, seq::index::sample};
 use tokio::{
     sync::{Mutex, RwLock},
     time::{interval, sleep},
@@ -40,38 +40,20 @@ impl GossipProtocol {
         }
     }
 
-    // pub fn add_peer(&self, peer: Node) {}
-
     pub async fn start_heartbeat(&self) {
         let mut interval = interval(self.config.heartbeat_interval);
 
         loop {
-            if let Err(e) = self.send_heartbeat().await {
+            let msg = GossipMessage::Heartbeat {
+                sender_id: self.local_node.id,
+            };
+
+            if let Err(e) = self.gossip(msg).await {
                 error!("Error sending heartbeat: {}", e);
             }
+
             interval.tick().await;
         }
-    }
-
-    pub async fn send_heartbeat(&self) -> Result<(), GossipError> {
-        let msg = GossipMessage::Heartbeat {
-            sender_id: self.local_node.id,
-        };
-
-        let mut rng = self.rng.lock().await;
-        let peers = self.peers.read().await;
-        let targets = peers
-            .choose_multiple(&mut rng, self.config.fanout)
-            .collect::<Vec<_>>();
-
-        for target in targets {
-            info!("sending heartbeat to {}", target.addr);
-            self.transport
-                .write(&msg.serialize()?, target.addr.to_string())
-                .await?;
-            sleep(Duration::from_millis(1)).await;
-        }
-        Ok(())
     }
 
     pub async fn start_receive(&self) {
@@ -81,6 +63,7 @@ impl GossipProtocol {
         loop {
             match self.transport.recv_from(&mut buf).await {
                 Ok((amt, src)) => {
+                    info!("received packet from {}", src);
                     if amt > MAX_PAYLOAD_SIZE {
                         error!("Received packet exceeds MTU: {} bytes", amt);
                         continue;
@@ -101,26 +84,25 @@ impl GossipProtocol {
         }
     }
 
-    // pub async fn gossip(&mut self) -> Result<(), GossipError> {
-    //     let mut rng = self.rng.lock().await;
-    //     let peers = self.peers.read().await;
-    //     let targets = peers
-    //         .choose_multiple(&mut rng, self.config.fanout)
-    //         .collect::<Vec<_>>();
+    async fn fanout_peer_addresses(&self) -> Vec<Node> {
+        let mut rng = self.rng.lock().await;
+        let peers = self.peers.read().await;
+        sample(&mut rng, peers.len(), self.config.fanout)
+            .iter()
+            .map(|i| peers[i].clone())
+            .collect::<Vec<_>>()
+    }
 
-    //     for peer in targets {
-    //         if !peer.is_offline(self.config.offline_timeout) {
-    //             let msg = GossipMessage::Update {
-    //                 node: self.local_node.clone(),
-    //             };
-    //             let buf = msg.serialize()?;
-    //             // self.socket.send_to(&buf, peer.addr)?;
-    //             // self.sender(msg, peer.addr);
-    //             self.transport.write(&buf, peer.addr.to_string()).await?;
-    //         }
-    //     }
-    //     Ok(())
-    // }
+    pub async fn gossip(&self, msg: GossipMessage) -> Result<(), GossipError> {
+        for node in self.fanout_peer_addresses().await {
+            self.transport
+                .write(&msg.serialize()?, node.addr.to_string())
+                .await?;
+            sleep(Duration::from_millis(1)).await;
+        }
+
+        Ok(())
+    }
 
     // fn send_to(
     //     &self,
@@ -163,6 +145,9 @@ impl GossipProtocol {
                 {
                     node.update_heartbeat();
                     info!("Heartbeat from node {}", sender_id);
+                } else {
+                    info!("New node {}", sender_id);
+                    peers.push(Node::new(sender_id, src));
                 }
             }
             GossipMessage::Update { node } => {
