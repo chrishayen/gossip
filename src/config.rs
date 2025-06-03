@@ -18,6 +18,8 @@ pub struct GossipConfig {
     pub ip_address: String,
     /// Node name
     pub node_name: String,
+    /// Message TTL
+    pub message_ttl: u8,
 }
 
 impl Default for GossipConfig {
@@ -26,6 +28,7 @@ impl Default for GossipConfig {
     /// gossip_interval: 2s
     /// offline_timeout: 10s
     /// fanout: 4
+    /// message_ttl: 3
     fn default() -> Self {
         GossipConfig {
             gossip_port: 42069,
@@ -36,6 +39,7 @@ impl Default for GossipConfig {
             prefix: "ht".to_string(),
             ip_address: "127.0.0.1".to_string(),
             node_name: "".to_string(),
+            message_ttl: 3,
         }
     }
 }
