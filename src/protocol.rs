@@ -148,20 +148,27 @@ impl GossipProtocol {
         }
     }
 
-    async fn fanout_peer_addresses(&self) -> Vec<Node> {
+    async fn fanout_peer_addresses(&self) -> Vec<SocketAddr> {
         let mut rng = self.rng.lock().await;
         let peers = self.peers.read().await;
-        let fanout = peers.len().min(self.config.fanout);
-        sample(&mut rng, peers.len(), fanout)
+        let valid_peers = peers
             .iter()
-            .map(|i| peers[i].clone())
+            .filter(|n| !n.is_offline(self.config.offline_timeout))
+            .filter(|n| n.id != self.local_node.id)
+            .collect::<Vec<_>>();
+
+        let fanout = valid_peers.len().min(self.config.fanout);
+
+        sample(&mut rng, valid_peers.len(), fanout)
+            .iter()
+            .map(|i| valid_peers[i].addr)
             .collect::<Vec<_>>()
     }
 
     pub async fn gossip(&self, msg: GossipMessage) -> Result<(), GossipError> {
-        for node in self.fanout_peer_addresses().await {
+        for addr in self.fanout_peer_addresses().await {
             let buf = GossipMessage::serialize(&msg)?;
-            self.transport.write(&buf, node.addr.to_string()).await?;
+            self.transport.write(&buf, addr.to_string()).await?;
             sleep(Duration::from_millis(1)).await;
         }
 

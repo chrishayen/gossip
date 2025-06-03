@@ -1,6 +1,6 @@
 TODO
 
 - [x] keep list of peers and their state
-- propagation w TTL
+- [x] propagation w TTL
+- [x] online/offline state
 - user-provided handlers
-- online/offline state
