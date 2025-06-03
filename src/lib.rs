@@ -12,10 +12,12 @@ use error::GossipError;
 use node::Node;
 use protocol::GossipTransport;
 use std::{
+    collections::HashMap,
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
     thread,
 };
+use tokio::runtime::Builder;
 
 pub use config::GossipConfig;
 
@@ -24,7 +26,7 @@ use crate::util::hash_node_name;
 pub async fn start(
     gossip_config: GossipConfig,
     transport: Box<dyn GossipTransport>,
-    seed_peers: Vec<Node>,
+    seed_peers: HashMap<u32, Node>,
 ) -> Result<(), GossipError> {
     // get the ip from the transport
     // and define the local node
@@ -46,11 +48,21 @@ pub async fn start(
 
     let handles = [
         thread::spawn(move || {
-            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let runtime = Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_time()
+                .build()
+                .unwrap();
+            // let runtime = tokio::runtime::Runtime::new().unwrap();
             runtime.block_on(p1.start_heartbeat());
         }),
         thread::spawn(move || {
-            let runtime = tokio::runtime::Runtime::new().unwrap();
+            // let runtime = tokio::runtime::Runtime::new().unwrap();
+            let runtime = Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_time()
+                .build()
+                .unwrap();
             runtime.block_on(p.start_receive());
         }),
     ];

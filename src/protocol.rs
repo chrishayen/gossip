@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::{net::SocketAddr, time::Duration};
 
 use crate::constants::MAX_PAYLOAD_SIZE;
@@ -19,7 +20,7 @@ use tokio::{
 pub struct GossipProtocol {
     config: GossipConfig,
     local_node: Node,
-    peers: RwLock<Vec<Node>>,
+    nodes: RwLock<HashMap<u32, Node>>,
     transport: Box<dyn GossipTransport>,
     rng: Mutex<StdRng>,
 }
@@ -28,13 +29,13 @@ impl GossipProtocol {
     pub fn new(
         config: GossipConfig,
         local_node: Node,
-        seed_peers: Vec<Node>,
+        seed_peers: HashMap<u32, Node>,
         transport: Box<dyn GossipTransport>,
     ) -> Self {
         GossipProtocol {
             config,
             local_node,
-            peers: RwLock::new(seed_peers),
+            nodes: RwLock::new(seed_peers),
             transport,
             rng: Mutex::new(StdRng::from_os_rng()),
         }
@@ -130,18 +131,19 @@ impl GossipProtocol {
     }
 
     async fn update_nodes(&self, node_id: u32, src: std::net::SocketAddr) {
-        let mut peers = self.peers.write().await;
+        let mut nodes = self.nodes.write().await;
 
         // if the node is not in the peers list, add it
-        if !peers.iter().any(|n| n.id == node_id) {
+        if !nodes.keys().any(|n| *n == node_id) {
             info!("new node {}", node_id);
-            peers.push(Node::new(node_id, src));
+            nodes.insert(node_id, Node::new(node_id, src));
         }
     }
 
     async fn update_heartbeat(&self, node_id: u32) {
-        let mut peers = self.peers.write().await;
-        if let Some(node) = peers.iter_mut().find(|n| n.id == node_id) {
+        let mut nodes = self.nodes.write().await;
+        error!("nodes: {}", nodes.len());
+        if let Some(node) = nodes.get_mut(&node_id) {
             node.update_heartbeat();
         }
     }
@@ -151,10 +153,10 @@ impl GossipProtocol {
         exclude_id: Option<u32>,
     ) -> Vec<SocketAddr> {
         let mut rng = self.rng.lock().await;
-        let peers = self.peers.read().await;
+        let peers = self.nodes.read().await;
 
         let valid_peers = peers
-            .iter()
+            .values()
             .filter(|n| !n.is_offline(self.config.offline_timeout))
             .filter(|n| n.id != self.local_node.id)
             .filter(|n| exclude_id.map(|id| n.id != id).unwrap_or(true))
@@ -168,7 +170,7 @@ impl GossipProtocol {
             .collect::<Vec<_>>();
 
         let offline_peers = peers
-            .iter()
+            .values()
             .filter(|n| n.is_offline(self.config.offline_timeout))
             .filter(|n| exclude_id.map(|id| n.id != id).unwrap_or(true))
             .collect::<Vec<_>>();

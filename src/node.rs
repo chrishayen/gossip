@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime};
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Hash)]
 pub enum NodeStatus {
     Online,
     Offline,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Hash)]
 pub struct Node {
     pub id: u32,
     pub addr: SocketAddr,

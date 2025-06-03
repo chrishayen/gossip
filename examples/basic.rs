@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use env_logger::Env;
 use gossip::{GossipConfig, start, tailscale, util};
 use log::info;
@@ -20,6 +22,11 @@ async fn main() {
     ts.listen().await.unwrap();
 
     let seed_peers = ts.get_peers().await.unwrap();
+    let seed_peers = seed_peers
+        .iter()
+        .map(|p| (p.id, p.clone()))
+        .collect::<HashMap<_, _>>();
+
     let ip = ts.get_ip().await.unwrap();
     let ip = util::extract_ipv4(ip.as_str()).unwrap();
 
