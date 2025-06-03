@@ -16,6 +16,8 @@ pub struct GossipConfig {
     pub prefix: String,
     /// IP address to listen on for gossip
     pub ip_address: String,
+    /// Node name
+    pub node_name: String,
 }
 
 impl Default for GossipConfig {
@@ -33,6 +35,7 @@ impl Default for GossipConfig {
             fanout: 4,
             prefix: "ht".to_string(),
             ip_address: "127.0.0.1".to_string(),
+            node_name: "".to_string(),
         }
     }
 }
