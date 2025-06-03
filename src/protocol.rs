@@ -139,53 +139,13 @@ impl GossipProtocol {
 
     pub async fn gossip(&self, msg: GossipMessage) -> Result<(), GossipError> {
         for node in self.fanout_peer_addresses().await {
-            self.transport
-                .write(&msg.serialize()?, node.addr.to_string())
-                .await?;
+            let buf = GossipMessage::serialize(&msg)?;
+            self.transport.write(&buf, node.addr.to_string()).await?;
             sleep(Duration::from_millis(1)).await;
         }
 
         Ok(())
     }
-
-    // fn send_to(
-    //     &self,
-    //     msg: &GossipMessage,
-    //     addr: std::net::SocketAddr,
-    // ) -> Result<(), GossipError> {
-    //     let buf = msg.serialize()?;
-    //     if buf.len() > self.config.MAX_PAYLOAD_SIZE {
-    //         return Err(GossipError::Serialization(
-    //             postcard::Error::SerializeBufferFull,
-    //         ));
-    //     }
-    //     self.socket.send_to(&buf, addr)?;
-    //     Ok(())
-    // }
-
-    // fn broadcast(&self, msg: &GossipMessage) -> Result<(), GossipError> {
-    //     for peer in &self.peers {
-    //         if !peer.is_offline(self.config.offline_timeout) {
-    //             let buf = msg.serialize()?;
-    //             let socket = Arc::clone(&self.socket);
-    //             socket.send_to(&buf, peer.addr)?;
-    //         } else {
-    //             info!("Skipping offline node {}", peer.id);
-    //         }
-    //     }
-    //     Ok(())
-    // }
-
-    // pub fn check_offline_nodes(&mut self) {
-    //     let peers = self.peers.write().unwrap();
-
-    //     for node in peers {
-    //         if node.is_offline(self.config.offline_timeout) {
-    //             node.status = NodeStatus::Offline;
-    //             info!("Marked node {} as offline", node.id);
-    //         }
-    //     }
-    // }
 }
 
 #[async_trait]
