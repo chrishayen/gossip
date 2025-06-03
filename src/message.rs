@@ -5,6 +5,7 @@ use crate::node::Node;
 use heapless::Vec;
 use postcard;
 use serde::{Deserialize, Serialize};
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct GossipMessage {
     pub from_id: u32,
@@ -15,9 +16,9 @@ pub struct GossipMessage {
 
 impl GossipMessage {
     pub fn serialize(
-        &self,
+        msg: &GossipMessage,
     ) -> Result<Vec<u8, MAX_PAYLOAD_SIZE>, postcard::Error> {
-        postcard::to_vec(self)
+        postcard::to_vec(msg)
     }
 
     pub fn deserialize(data: &[u8]) -> Result<Self, postcard::Error> {
@@ -40,17 +41,5 @@ impl GossipMessage {
             msg_type: "update".to_string(),
             payload: postcard::to_vec(&node).unwrap(),
         }
-    }
-
-    pub fn serialize_payload<T: Serialize>(
-        msg: T,
-    ) -> Result<Vec<u8, MAX_PAYLOAD_SIZE>, postcard::Error> {
-        postcard::to_vec(&msg)
-    }
-
-    pub fn deserialize_payload<T: for<'de> Deserialize<'de>>(
-        msg: &[u8],
-    ) -> Result<T, postcard::Error> {
-        postcard::from_bytes(msg)
     }
 }
