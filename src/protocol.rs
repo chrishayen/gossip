@@ -49,7 +49,7 @@ impl GossipProtocol {
                 Some(self.config.message_ttl),
             );
 
-            if let Err(e) = self.gossip(msg).await {
+            if let Err(e) = self.gossip(msg, None).await {
                 error!("Error sending heartbeat: {}", e);
             }
 
@@ -121,13 +121,11 @@ impl GossipProtocol {
     }
 
     async fn forward(&self, mut msg: GossipMessage) {
+        let exclude_id = Some(msg.from_id);
         msg.ttl -= 1;
 
         if msg.ttl > 0 {
-            info!("forwarding message");
-            let _ = self.gossip(msg).await;
-        } else {
-            info!("message ttl expired");
+            let _ = self.gossip(msg, exclude_id).await;
         }
     }
 
@@ -148,25 +146,60 @@ impl GossipProtocol {
         }
     }
 
-    async fn fanout_peer_addresses(&self) -> Vec<SocketAddr> {
+    async fn gossip_addresses(
+        &self,
+        exclude_id: Option<u32>,
+    ) -> Vec<SocketAddr> {
         let mut rng = self.rng.lock().await;
         let peers = self.peers.read().await;
+
         let valid_peers = peers
             .iter()
             .filter(|n| !n.is_offline(self.config.offline_timeout))
             .filter(|n| n.id != self.local_node.id)
+            .filter(|n| exclude_id.map(|id| n.id != id).unwrap_or(true))
             .collect::<Vec<_>>();
 
         let fanout = valid_peers.len().min(self.config.fanout);
 
-        sample(&mut rng, valid_peers.len(), fanout)
+        let mut addresses = sample(&mut rng, valid_peers.len(), fanout)
             .iter()
             .map(|i| valid_peers[i].addr)
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+
+        let offline_peers = peers
+            .iter()
+            .filter(|n| n.is_offline(self.config.offline_timeout))
+            .filter(|n| exclude_id.map(|id| n.id != id).unwrap_or(true))
+            .collect::<Vec<_>>();
+
+        // add an offline peer if there is one
+        let rescue_peers =
+            sample(&mut rng, offline_peers.len(), 1.min(offline_peers.len()))
+                .iter()
+                .map(|i| offline_peers[i].addr)
+                .collect::<Vec<_>>();
+
+        if !rescue_peers.is_empty() {
+            addresses.extend(rescue_peers);
+        }
+
+        if addresses.is_empty() {
+            error!("no addresses to gossip to");
+        }
+
+        addresses
     }
 
-    pub async fn gossip(&self, msg: GossipMessage) -> Result<(), GossipError> {
-        for addr in self.fanout_peer_addresses().await {
+    pub async fn gossip(
+        &self,
+        msg: GossipMessage,
+        exclude_id: Option<u32>,
+    ) -> Result<(), GossipError> {
+        let addresses = self.gossip_addresses(exclude_id).await;
+        info!("gossiping to {:?}", addresses);
+
+        for addr in addresses {
             let buf = GossipMessage::serialize(&msg)?;
             self.transport.write(&buf, addr.to_string()).await?;
             sleep(Duration::from_millis(1)).await;
