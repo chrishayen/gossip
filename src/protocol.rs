@@ -7,7 +7,7 @@ use crate::node::Node;
 use crate::{config::GossipConfig, message::GossipMessage};
 use async_trait::async_trait;
 
-use log::{error, info};
+use log::{debug, error, info};
 
 use rand::{SeedableRng, rngs::StdRng, seq::index::sample};
 
@@ -74,12 +74,22 @@ impl GossipProtocol {
                         continue;
                     }
 
+                    if amt == 0 {
+                        debug!("received empty packet");
+                        continue;
+                    }
+
                     match GossipMessage::deserialize(&buf[..amt]) {
                         Ok(msg) => {
                             self.handle_message(msg, src).await;
                         }
                         Err(e) => {
-                            error!("Deserialization error: {}", e)
+                            debug!(
+                                "Deserialization error: {} {} {}",
+                                e,
+                                amt,
+                                String::from_utf8_lossy(&buf[..amt])
+                            )
                         }
                     }
                 }
@@ -107,6 +117,19 @@ impl GossipProtocol {
             _ => {
                 error!("Unknown message type: {}", msg.msg_type);
             }
+        }
+
+        self.forward(msg).await;
+    }
+
+    async fn forward(&self, mut msg: GossipMessage) {
+        msg.ttl -= 1;
+
+        if msg.ttl > 0 {
+            info!("forwarding message");
+            let _ = self.gossip(msg).await;
+        } else {
+            info!("message ttl expired");
         }
     }
 
