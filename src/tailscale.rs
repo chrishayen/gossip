@@ -106,12 +106,6 @@ impl Tailscale {
 
         Ok(nodes)
     }
-
-    // pub async fn listen(&self) -> Result<i32, GossipError> {
-    //     self.ts
-    //         .listen("udp", &format!(":{}", self.gossip_config.gossip_port))
-    //         .map_err(|e| GossipError::NetworkError(e))
-    // }
 }
 
 #[async_trait]
